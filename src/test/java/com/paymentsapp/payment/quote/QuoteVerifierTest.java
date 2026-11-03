@@ -26,7 +26,7 @@ class QuoteVerifierTest {
     private final QuoteVerifier verifier = new QuoteVerifier(json, SECRET, Clock.fixed(NOW, ZoneOffset.UTC));
     private final UUID userId = UUID.randomUUID();
     private final UUID accountId = UUID.randomUUID();
-    private final Quote quote = new Quote(UUID.randomUUID(), userId, accountId, "SBP_PHONE",
+    private final Quote quote = new Quote(UUID.randomUUID(), userId, accountId, "SBP_PHONE", "SBP", null,
             new BigDecimal("100"), new BigDecimal("1.00"), 1, NOW.plusSeconds(600));
 
     // Так же, как подписывает pricing
@@ -49,7 +49,7 @@ class QuoteVerifierTest {
 
     @Test
     void acceptsValidQuote() throws Exception {
-        Quote verified = verifier.verify(sign(quote, SECRET), userId, accountId, "SBP_PHONE", new BigDecimal("100.00"));
+        Quote verified = verifier.verify(sign(quote, SECRET), userId, accountId, "SBP_PHONE", new BigDecimal("100.00"), null);
 
         assertThat(verified.commission()).isEqualByComparingTo("1.00");
     }
@@ -58,17 +58,17 @@ class QuoteVerifierTest {
     void rejectsForeignSignature() throws Exception {
         String token = sign(quote, "other-secret");
 
-        assertThat(codeOf(() -> verifier.verify(token, userId, accountId, "SBP_PHONE", new BigDecimal("100"))))
+        assertThat(codeOf(() -> verifier.verify(token, userId, accountId, "SBP_PHONE", new BigDecimal("100"), null)))
                 .isEqualTo(Code.INVALID_QUOTE);
     }
 
     @Test
     void rejectsExpiredQuote() throws Exception {
-        Quote expired = new Quote(quote.quoteId(), userId, accountId, "SBP_PHONE", new BigDecimal("100"),
+        Quote expired = new Quote(quote.quoteId(), userId, accountId, "SBP_PHONE", "SBP", null, new BigDecimal("100"),
                 new BigDecimal("1.00"), 1, NOW);
         String token = sign(expired, SECRET);
 
-        assertThat(codeOf(() -> verifier.verify(token, userId, accountId, "SBP_PHONE", new BigDecimal("100"))))
+        assertThat(codeOf(() -> verifier.verify(token, userId, accountId, "SBP_PHONE", new BigDecimal("100"), null)))
                 .isEqualTo(Code.QUOTE_EXPIRED);
     }
 
@@ -76,17 +76,31 @@ class QuoteVerifierTest {
     void rejectsQuoteForAnotherAmountOrAccount() throws Exception {
         String token = sign(quote, SECRET);
 
-        assertThat(codeOf(() -> verifier.verify(token, userId, accountId, "SBP_PHONE", new BigDecimal("1000"))))
+        assertThat(codeOf(() -> verifier.verify(token, userId, accountId, "SBP_PHONE", new BigDecimal("1000"), null)))
                 .isEqualTo(Code.QUOTE_MISMATCH);
-        assertThat(codeOf(() -> verifier.verify(token, userId, UUID.randomUUID(), "SBP_PHONE", new BigDecimal("100"))))
+        assertThat(codeOf(() -> verifier.verify(token, userId, UUID.randomUUID(), "SBP_PHONE", new BigDecimal("100"), null)))
                 .isEqualTo(Code.QUOTE_MISMATCH);
-        assertThat(codeOf(() -> verifier.verify(token, userId, accountId, "CARD2CARD", new BigDecimal("100"))))
+        assertThat(codeOf(() -> verifier.verify(token, userId, accountId, "CARD2CARD", new BigDecimal("100"), null)))
                 .isEqualTo(Code.QUOTE_MISMATCH);
     }
 
     @Test
+    void rejectsQuoteForAnotherRecipientCard() throws Exception {
+        String cardHash = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                .digest("2200300456781002".getBytes(StandardCharsets.UTF_8)));
+        Quote cardQuote = new Quote(UUID.randomUUID(), userId, accountId, "CARD2CARD", "OUR_CARD", cardHash,
+                new BigDecimal("100"), new BigDecimal("1.00"), 1, NOW.plusSeconds(600));
+        String token = sign(cardQuote, SECRET);
+
+        assertThat(verifier.verify(token, userId, accountId, "CARD2CARD", new BigDecimal("100"), "2200300456781002"))
+                .isNotNull();
+        assertThat(codeOf(() -> verifier.verify(token, userId, accountId, "CARD2CARD", new BigDecimal("100"),
+                "4111111111111111"))).isEqualTo(Code.QUOTE_MISMATCH);
+    }
+
+    @Test
     void rejectsGarbage() {
-        assertThatThrownBy(() -> verifier.verify("not-a-token", userId, accountId, "SBP_PHONE", BigDecimal.TEN))
+        assertThatThrownBy(() -> verifier.verify("not-a-token", userId, accountId, "SBP_PHONE", BigDecimal.TEN, null))
                 .isInstanceOf(PaymentException.class);
     }
 }

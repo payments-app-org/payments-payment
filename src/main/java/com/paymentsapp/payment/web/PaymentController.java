@@ -74,7 +74,8 @@ public class PaymentController {
         Payment payment;
         try {
             // Шаг 2.2–2.4. Котировка, реквизиты, создание платежа — до внешних вызовов, чтобы остался след
-            Quote quote = quotes.verify(req.quoteToken(), userId, req.sourceAccountId(), req.type().name(), req.amount());
+            Quote quote = quotes.verify(req.quoteToken(), userId, req.sourceAccountId(), req.type().name(), req.amount(),
+                    req.recipientCardNumber());
             Requisites.validate(req);
             payment = createPayment(userId, req, quote, key);
         } catch (PaymentException e) {

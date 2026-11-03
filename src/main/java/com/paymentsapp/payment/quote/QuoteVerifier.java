@@ -10,6 +10,7 @@ import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.HexFormat;
 import java.util.UUID;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -38,7 +39,9 @@ public class QuoteVerifier {
         this.clock = clock;
     }
 
-    public Quote verify(String token, UUID userId, UUID sourceAccountId, String operationType, BigDecimal amount) {
+    // recipientKey — реквизит, на который платим (номер карты); должен совпасть с тем, для которого считали тариф
+    public Quote verify(String token, UUID userId, UUID sourceAccountId, String operationType, BigDecimal amount,
+                        String recipientKey) {
         String[] parts = token == null ? new String[0] : token.split("\\.");
         if (parts.length != 2) {
             throw new PaymentException(INVALID_QUOTE, "Некорректная котировка");
@@ -58,10 +61,22 @@ public class QuoteVerifier {
             throw new PaymentException(QUOTE_EXPIRED, "Расчёт комиссии устарел, обновите сумму");
         }
         if (!quote.userId().equals(userId) || !quote.sourceAccountId().equals(sourceAccountId)
-                || !quote.operationType().equals(operationType) || quote.amount().compareTo(amount) != 0) {
+                || !quote.operationType().equals(operationType) || quote.amount().compareTo(amount) != 0
+                || quote.recipientHash() != null && !quote.recipientHash().equals(sha256(recipientKey))) {
             throw new PaymentException(QUOTE_MISMATCH, "Котировка выдана на другой платёж");
         }
         return quote;
+    }
+
+    private static String sha256(String value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private byte[] hmac(String data) {
