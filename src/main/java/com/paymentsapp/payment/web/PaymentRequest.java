@@ -11,6 +11,7 @@ import java.util.UUID;
 
 // SBP_PHONE: recipientPhone + recipientBankId (необязателен: без него — банк по умолчанию получателя).
 // CARD2CARD: recipientCardNumber. OWN_TRANSFER: destinationAccountId — свой счёт зачисления.
+// ABROAD: country, receiveCurrency, receiveAmount, transferMethodId и recipientFields — поля из шаблона способа в biller.
 public record PaymentRequest(
         @NotNull PaymentType type,
         @NotNull UUID sourceAccountId,
@@ -21,7 +22,12 @@ public record PaymentRequest(
         @NotNull @Positive @Digits(integer = 15, fraction = 2) BigDecimal amount,
         String currency,
         @NotBlank String quoteToken,
-        @Size(max = 40) String message
+        @Size(max = 40) String message,
+        String country,
+        String receiveCurrency,
+        BigDecimal receiveAmount,
+        Integer transferMethodId,
+        java.util.Map<String, String> recipientFields
 ) {
 
     public String currencyOrDefault() {

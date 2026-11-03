@@ -30,6 +30,12 @@ final class Requisites {
                 require(req.recipientPhone() == null && req.recipientBankId() == null,
                         "Для перевода по карте телефон и банк не нужны");
             }
+            case ABROAD -> {
+                require(req.country() != null && req.receiveCurrency() != null && req.receiveAmount() != null
+                        && req.transferMethodId() != null, "Не выбраны страна, валюта или способ перевода");
+                require(req.recipientPhone() == null && req.recipientBankId() == null && req.recipientCardNumber() == null
+                        && req.destinationAccountId() == null, "Данные получателя передаются в recipientFields");
+            }
             case OWN_TRANSFER -> {
                 require(req.destinationAccountId() != null, "Не выбран счёт зачисления");
                 require(!req.destinationAccountId().equals(req.sourceAccountId()), "Нельзя перевести на тот же счёт");

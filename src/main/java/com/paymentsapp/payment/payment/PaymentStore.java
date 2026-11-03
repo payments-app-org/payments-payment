@@ -90,6 +90,13 @@ public class PaymentStore {
         data.put("recipientCardMask", p.getRecipientCardMask());
         data.put("message", p.getMessage());
         data.put("sourceExternal", p.isSourceExternal());
+        if (p.getType() == PaymentType.ABROAD) {
+            data.put("country", p.getCountry());
+            data.put("receiveCurrency", p.getReceiveCurrency());
+            data.put("receiveAmount", p.getReceiveAmount());
+            data.put("fxRate", p.getFxRate());
+            data.put("transferMethodName", p.getTransferMethodName());
+        }
         data.put("destinationExternal", p.isDestinationExternal());
         data.put("createdAt", p.getCreatedAt());
         data.put("amount", p.getAmount());

@@ -14,3 +14,6 @@ databaseChangeLog:
   - include:
       file: changes/005-destination-external.sql
       relativeToChangelogFile: true
+  - include:
+      file: changes/006-abroad.sql
+      relativeToChangelogFile: true

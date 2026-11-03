@@ -45,6 +45,17 @@ public class Payment {
     private UUID quoteId;
     private String message;
     private String processingId;
+    // За рубеж
+    private String country;
+    private String receiveCurrency;
+    private BigDecimal receiveAmount;
+    private BigDecimal fxRate;
+    private Integer transferMethodId;
+    private String transferMethodName;
+
+    // Данные получателя по полям способа перевода; номера карт — маской
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
+    private String recipientDetails;
 
     @Enumerated(EnumType.STRING)
     private FailureCode failureCode;
@@ -119,6 +130,21 @@ public class Payment {
         }
     }
 
+    // Детали перевода за рубеж
+    public record Abroad(String country, String receiveCurrency, BigDecimal receiveAmount, BigDecimal fxRate,
+                         int transferMethodId, String transferMethodName, String recipientDetailsJson) {
+    }
+
+    public void setAbroad(Abroad a) {
+        this.country = a.country();
+        this.receiveCurrency = a.receiveCurrency();
+        this.receiveAmount = a.receiveAmount();
+        this.fxRate = a.fxRate();
+        this.transferMethodId = a.transferMethodId();
+        this.transferMethodName = a.transferMethodName();
+        this.recipientDetails = a.recipientDetailsJson();
+    }
+
     void moveTo(PaymentStatus to) {
         if (!status.next().contains(to)) {
             throw new IllegalStateException("Платёж " + id + ": переход " + status + " → " + to + " запрещён");
@@ -166,5 +192,12 @@ public class Payment {
     public FailureCode getFailureCode() { return failureCode; }
     public String getFailureReason() { return failureReason; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
+    public String getCountry() { return country; }
+    public String getReceiveCurrency() { return receiveCurrency; }
+    public BigDecimal getReceiveAmount() { return receiveAmount; }
+    public BigDecimal getFxRate() { return fxRate; }
+    public Integer getTransferMethodId() { return transferMethodId; }
+    public String getTransferMethodName() { return transferMethodName; }
+    public String getRecipientDetails() { return recipientDetails; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
 }

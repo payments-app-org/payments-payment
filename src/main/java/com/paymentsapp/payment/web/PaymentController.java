@@ -4,6 +4,7 @@ import static com.paymentsapp.payment.web.PaymentException.Code.*;
 
 import com.paymentsapp.payment.client.AccountClient;
 import com.paymentsapp.payment.client.AccountClient.Recipient;
+import com.paymentsapp.payment.client.BillerClient;
 import com.paymentsapp.payment.idempotency.Idempotency;
 import com.paymentsapp.payment.idempotency.IdempotencyKey;
 import com.paymentsapp.payment.payment.Payment;
@@ -48,16 +49,19 @@ public class PaymentController {
     private final PaymentRepository payments;
     private final PaymentSaga saga;
     private final AccountClient account;
+    private final BillerClient biller;
     private final JsonMapper json;
 
     public PaymentController(Idempotency idempotency, QuoteVerifier quotes, PaymentStore store,
-                             PaymentRepository payments, PaymentSaga saga, AccountClient account, JsonMapper json) {
+                             PaymentRepository payments, PaymentSaga saga, AccountClient account, BillerClient biller,
+                             JsonMapper json) {
         this.idempotency = idempotency;
         this.quotes = quotes;
         this.store = store;
         this.payments = payments;
         this.saga = saga;
         this.account = account;
+        this.biller = biller;
         this.json = json;
     }
 
@@ -72,6 +76,7 @@ public class PaymentController {
         }
 
         Payment payment;
+        String cardForProcessing = req.recipientCardNumber();
         try {
             // Шаг 2.2–2.4. Котировка, реквизиты, создание платежа — до внешних вызовов, чтобы остался след
             // Тариф зависел от получателя: карта (перевод по карте) или свой счёт зачисления
@@ -80,7 +85,11 @@ public class PaymentController {
             Quote quote = quotes.verify(req.quoteToken(), userId, req.sourceAccountId(), req.type().name(), req.amount(),
                     recipientKey);
             Requisites.validate(req);
-            payment = createPayment(userId, req, quote, key);
+            AbroadDetails.Checked abroad = req.type() == PaymentType.ABROAD ? checkAbroad(req, quote) : null;
+            if (abroad != null) {
+                cardForProcessing = abroad.cardNumber();
+            }
+            payment = createPayment(userId, req, quote, key, abroad);
         } catch (PaymentException e) {
             if (e.getCode() == SERVICE_UNAVAILABLE) {
                 idempotency.release(key);
@@ -91,7 +100,7 @@ public class PaymentController {
         }
 
         // Шаги 3–6
-        return respond(saga.run(payment, req.recipientCardNumber()));
+        return respond(saga.run(payment, cardForProcessing));
     }
 
     @GetMapping("/{paymentId}")
@@ -102,7 +111,17 @@ public class PaymentController {
         return respond(p);
     }
 
-    private Payment createPayment(UUID userId, PaymentRequest req, Quote quote, String key) {
+    private AbroadDetails.Checked checkAbroad(PaymentRequest req, Quote quote) {
+        try {
+            var method = biller.method(req.transferMethodId())
+                    .orElseThrow(() -> new PaymentException(INVALID_REQUISITES, "Способ перевода не найден"));
+            return AbroadDetails.check(req, quote, method, json);
+        } catch (RestClientException e) {
+            throw new PaymentException(SERVICE_UNAVAILABLE, "Справочник переводов недоступен, попробуйте позже");
+        }
+    }
+
+    private Payment createPayment(UUID userId, PaymentRequest req, Quote quote, String key, AbroadDetails.Checked abroad) {
         Optional<Recipient> recipient;
         String senderName;
         boolean sourceExternal;
@@ -116,6 +135,10 @@ public class PaymentController {
                 destinationExternal = user.isExternal(req.destinationAccountId());
                 recipient = Optional.of(new Recipient(userId, "На " + user.title(req.destinationAccountId(), "свой счёт"),
                         req.destinationAccountId(), null));
+            } else if (req.type() == PaymentType.ABROAD) {
+                // Получатель за рубежом — не наш клиент
+                senderName = user.displayName();
+                recipient = Optional.empty();
             } else {
                 senderName = user.displayName();
                 recipient = req.type() == PaymentType.SBP_PHONE
@@ -134,13 +157,17 @@ public class PaymentController {
         }
         Payment.Parties parties = recipient
                 .map(r -> new Payment.Parties(senderName, r.userId(), r.accountId(), r.displayName()))
-                .orElse(Payment.Parties.external(senderName))
+                .orElse(abroad != null ? new Payment.Parties(senderName, null, null, abroad.recipientName())
+                        : Payment.Parties.external(senderName))
                 .withExternal(sourceExternal, destinationExternal);
 
         Payment payment = new Payment(userId, req.type(), req.sourceAccountId(), parties, req.recipientPhone(), bankId,
                 req.recipientCardNumber() == null ? null : Requisites.maskCard(req.recipientCardNumber()),
                 req.amount(), quote.commission(), quote.tariffId(), req.currencyOrDefault(), quote.quoteId(),
                 req.message() == null || req.message().isBlank() ? null : req.message().trim());
+        if (abroad != null) {
+            payment.setAbroad(abroad.abroad());
+        }
         try {
             return store.create(payment, key);
         } catch (DataIntegrityViolationException e) {

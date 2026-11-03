@@ -41,6 +41,9 @@ clients:
   processing:
     url: ${PROCESSING_URL:http://localhost:8085}
     timeout: 3s
+  biller:
+    url: ${BILLER_URL:http://localhost:8087}
+    timeout: 3s
 
 # Общий с pricing секрет для проверки котировок
 quote:

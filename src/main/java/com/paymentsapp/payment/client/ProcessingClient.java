@@ -32,6 +32,12 @@ public class ProcessingClient {
         body.put("recipientPhone", p.getRecipientPhone());
         body.put("recipientBankId", p.getRecipientBankId());
         body.put("recipientCardNumber", recipientCardNumber);
+        if (p.getType() == com.paymentsapp.payment.payment.PaymentType.ABROAD) {
+            body.put("country", p.getCountry());
+            body.put("receiveCurrency", p.getReceiveCurrency());
+            body.put("receiveAmount", p.getReceiveAmount());
+            body.put("transferMethod", p.getTransferMethodName());
+        }
         return rest.post().uri("/api/processing/transfers").body(body).retrieve().body(TransferResult.class);
     }
 
