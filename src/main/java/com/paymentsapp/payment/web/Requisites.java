@@ -1,0 +1,58 @@
+package com.paymentsapp.payment.web;
+
+import static com.paymentsapp.payment.web.PaymentException.Code.INVALID_REQUISITES;
+
+import java.util.regex.Pattern;
+
+// Проверка реквизитов получателя
+final class Requisites {
+
+    private static final Pattern PHONE = Pattern.compile("\\+7\\d{10}");
+    // Идентификатор участника СБП — 12 цифр
+    private static final Pattern BANK_ID = Pattern.compile("\\d{12}");
+    private static final Pattern CARD = Pattern.compile("\\d{16,19}");
+
+    private Requisites() {
+    }
+
+    static void validate(PaymentRequest req) {
+        switch (req.type()) {
+            case SBP_PHONE -> {
+                require(req.recipientPhone() != null && PHONE.matcher(req.recipientPhone()).matches(),
+                        "Телефон получателя в формате +7XXXXXXXXXX");
+                require(req.recipientBankId() != null && BANK_ID.matcher(req.recipientBankId()).matches(),
+                        "Не выбран банк получателя");
+                require(req.recipientCardNumber() == null, "Для перевода по телефону номер карты не нужен");
+            }
+            case CARD2CARD -> {
+                require(req.recipientCardNumber() != null && CARD.matcher(req.recipientCardNumber()).matches()
+                        && luhn(req.recipientCardNumber()), "Некорректный номер карты получателя");
+                require(req.recipientPhone() == null && req.recipientBankId() == null,
+                        "Для перевода по карте телефон и банк не нужны");
+            }
+        }
+    }
+
+    // 2200700123473752 → 2200 70** **** 3752
+    static String maskCard(String number) {
+        return number.substring(0, 4) + " " + number.substring(4, 6) + "** **** " + number.substring(number.length() - 4);
+    }
+
+    private static void require(boolean condition, String message) {
+        if (!condition) {
+            throw new PaymentException(INVALID_REQUISITES, message);
+        }
+    }
+
+    private static boolean luhn(String digits) {
+        int sum = 0;
+        for (int i = 0; i < digits.length(); i++) {
+            int n = digits.charAt(digits.length() - 1 - i) - '0';
+            if (i % 2 == 1) {
+                n = n * 2 > 9 ? n * 2 - 9 : n * 2;
+            }
+            sum += n;
+        }
+        return sum % 10 == 0;
+    }
+}

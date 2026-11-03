@@ -1,0 +1,37 @@
+package com.paymentsapp.payment.web;
+
+import com.paymentsapp.payment.payment.FailureCode;
+import com.paymentsapp.payment.payment.Payment;
+import com.paymentsapp.payment.payment.PaymentStatus;
+import com.paymentsapp.payment.payment.PaymentType;
+import java.math.BigDecimal;
+import java.util.UUID;
+import org.springframework.http.HttpStatus;
+
+public record PaymentResponse(
+        UUID paymentId,
+        PaymentType type,
+        PaymentStatus status,
+        BigDecimal amount,
+        BigDecimal commission,
+        BigDecimal total,
+        FailureCode failureCode,
+        String message
+) {
+
+    static PaymentResponse of(Payment p) {
+        String message = switch (p.getStatus()) {
+            case SUCCESS -> "Перевод выполнен";
+            case FAILED -> p.getFailureReason();
+            case COMPENSATING -> p.getFailureReason() + ". Возвращаем средства";
+            default -> "Перевод обрабатывается";
+        };
+        return new PaymentResponse(p.getId(), p.getType(), p.getStatus(), p.getAmount(), p.getCommissionAmount(),
+                p.getTotal(), p.getFailureCode(), message);
+    }
+
+    // 200 — платёж завершён (успешно или нет), 202 — ещё в процессе
+    HttpStatus httpStatus() {
+        return status.isFinal() ? HttpStatus.OK : HttpStatus.ACCEPTED;
+    }
+}
