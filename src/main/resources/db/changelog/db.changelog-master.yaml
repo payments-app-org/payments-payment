@@ -8,3 +8,6 @@ databaseChangeLog:
   - include:
       file: changes/003-own-transfer.sql
       relativeToChangelogFile: true
+  - include:
+      file: changes/004-source-external.sql
+      relativeToChangelogFile: true

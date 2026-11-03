@@ -26,6 +26,8 @@ public class Payment {
     private PaymentStatus status;
 
     private UUID sourceAccountId;
+    // Списание с привязанной карты другого банка — его проводит процессинг
+    private boolean sourceExternal;
     private String senderName;
     private UUID recipientUserId;
     private UUID recipientAccountId;
@@ -72,6 +74,7 @@ public class Payment {
         this.type = type;
         this.status = PaymentStatus.CREATED;
         this.sourceAccountId = sourceAccountId;
+        this.sourceExternal = parties.sourceExternal();
         this.senderName = parties.senderName();
         this.recipientUserId = parties.recipientUserId();
         this.recipientAccountId = parties.recipientAccountId();
@@ -91,10 +94,20 @@ public class Payment {
     }
 
     // Кто платит и кому. Получатель-клиент нашего банка — есть userId и карта для зачисления.
-    public record Parties(String senderName, UUID recipientUserId, UUID recipientAccountId, String recipientName) {
+    // sourceExternal — списываем с привязанной карты другого банка.
+    public record Parties(String senderName, UUID recipientUserId, UUID recipientAccountId, String recipientName,
+                          boolean sourceExternal) {
+
+        public Parties(String senderName, UUID recipientUserId, UUID recipientAccountId, String recipientName) {
+            this(senderName, recipientUserId, recipientAccountId, recipientName, false);
+        }
 
         public static Parties external(String senderName) {
             return new Parties(senderName, null, null, null);
+        }
+
+        public Parties withSourceExternal(boolean value) {
+            return new Parties(senderName, recipientUserId, recipientAccountId, recipientName, value);
         }
     }
 
@@ -120,6 +133,7 @@ public class Payment {
     public PaymentType getType() { return type; }
     public PaymentStatus getStatus() { return status; }
     public UUID getSourceAccountId() { return sourceAccountId; }
+    public boolean isSourceExternal() { return sourceExternal; }
     public String getSenderName() { return senderName; }
     public UUID getRecipientUserId() { return recipientUserId; }
     public UUID getRecipientAccountId() { return recipientAccountId; }

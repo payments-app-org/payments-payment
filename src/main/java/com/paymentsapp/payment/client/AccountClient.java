@@ -58,22 +58,32 @@ public class AccountClient {
         return findRecipient("cardNumber", cardNumber);
     }
 
-    // Имя отправителя, как его увидит получатель
-    public String displayName(UUID userId) {
+    // Профиль: имя отправителя (как его увидит получатель) и его счета с названиями и типами
+    public UserInfo user(UUID userId) {
         JsonNode user = rest.get().uri("/api/users/{userId}", userId).retrieve().body(JsonNode.class);
-        return user.path("displayName").asString(null);
-    }
-
-    // Названия счетов пользователя: «Мой кошелёк», «Зарплатная WEEKEND ·· 3752»
-    public Map<UUID, String> accountTitles(UUID userId) {
-        JsonNode user = rest.get().uri("/api/users/{userId}", userId).retrieve().body(JsonNode.class);
-        Map<UUID, String> titles = new HashMap<>();
+        Map<UUID, AccountInfo> accounts = new HashMap<>();
         for (JsonNode a : user.path("accounts")) {
             String last4 = a.path("cardLast4").asString(null);
-            titles.put(UUID.fromString(a.path("id").asString()),
-                    a.path("title").asString() + (last4 == null ? "" : " ·· " + last4));
+            accounts.put(UUID.fromString(a.path("id").asString()), new AccountInfo(
+                    a.path("title").asString() + (last4 == null ? "" : " ·· " + last4), a.path("type").asString()));
         }
-        return titles;
+        return new UserInfo(user.path("displayName").asString(null), accounts);
+    }
+
+    public record UserInfo(String displayName, Map<UUID, AccountInfo> accounts) {
+
+        public String title(UUID accountId, String fallback) {
+            AccountInfo a = accounts.get(accountId);
+            return a == null ? fallback : a.title();
+        }
+
+        public boolean isExternal(UUID accountId) {
+            AccountInfo a = accounts.get(accountId);
+            return a != null && "EXTERNAL_CARD".equals(a.type());
+        }
+    }
+
+    public record AccountInfo(String title, String type) {
     }
 
     private Optional<Recipient> findRecipient(String param, String value) {

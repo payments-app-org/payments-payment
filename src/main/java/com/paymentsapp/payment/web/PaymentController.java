@@ -105,15 +105,17 @@ public class PaymentController {
     private Payment createPayment(UUID userId, PaymentRequest req, Quote quote, String key) {
         Optional<Recipient> recipient;
         String senderName;
+        boolean sourceExternal;
         try {
+            AccountClient.UserInfo user = account.user(userId);
+            sourceExternal = user.isExternal(req.sourceAccountId());
             if (req.type() == PaymentType.OWN_TRANSFER) {
                 // Стороны — свои счета: в истории будет «С Зарплатная ·· 3752» / «На Мой кошелёк»
-                var titles = account.accountTitles(userId);
-                senderName = "С " + titles.getOrDefault(req.sourceAccountId(), "своего счёта");
-                recipient = Optional.of(new Recipient(userId, "На " + titles.getOrDefault(req.destinationAccountId(), "свой счёт"),
+                senderName = "С " + user.title(req.sourceAccountId(), "своего счёта");
+                recipient = Optional.of(new Recipient(userId, "На " + user.title(req.destinationAccountId(), "свой счёт"),
                         req.destinationAccountId(), null));
             } else {
-                senderName = account.displayName(userId);
+                senderName = user.displayName();
                 recipient = req.type() == PaymentType.SBP_PHONE
                         ? account.findRecipientByPhone(req.recipientPhone())
                         : account.findRecipientByCard(req.recipientCardNumber());
@@ -130,7 +132,8 @@ public class PaymentController {
         }
         Payment.Parties parties = recipient
                 .map(r -> new Payment.Parties(senderName, r.userId(), r.accountId(), r.displayName()))
-                .orElse(Payment.Parties.external(senderName));
+                .orElse(Payment.Parties.external(senderName))
+                .withSourceExternal(sourceExternal);
 
         Payment payment = new Payment(userId, req.type(), req.sourceAccountId(), parties, req.recipientPhone(), bankId,
                 req.recipientCardNumber() == null ? null : Requisites.maskCard(req.recipientCardNumber()),
