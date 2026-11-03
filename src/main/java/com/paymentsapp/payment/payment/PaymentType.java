@@ -1,7 +1,9 @@
 package com.paymentsapp.payment.payment;
 
-// Пока два вида; внутренние переводы и оплата счетов появятся позже
+// Оплата счетов появится позже
 public enum PaymentType {
     SBP_PHONE,
-    CARD2CARD
+    CARD2CARD,
+    // Между своими счетами: деньги не покидают банк — без антифрода и процессинга
+    OWN_TRANSFER
 }

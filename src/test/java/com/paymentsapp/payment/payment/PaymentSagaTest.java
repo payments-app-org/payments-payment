@@ -65,6 +65,26 @@ class PaymentSagaTest {
     }
 
     @Test
+    void ownTransferSkipsFraudAndProcessing() {
+        Payment own = new Payment(UUID.randomUUID(), PaymentType.OWN_TRANSFER, UUID.randomUUID(),
+                new Payment.Parties("С Зарплатная ·· 3752", UUID.randomUUID(), UUID.randomUUID(), "На Мой кошелёк"),
+                null, null, null, new BigDecimal("1000"), new BigDecimal("10"), 1, "RUB", UUID.randomUUID(), null);
+        UUID ownId = own.getId();
+        when(store.move(eq(ownId), any(), anyString())).thenReturn(own);
+
+        saga.run(own, null);
+
+        var order = inOrder(account, store);
+        order.verify(account).reserve(own);
+        order.verify(store).move(eq(ownId), eq(RESERVED), anyString());
+        order.verify(store).move(eq(ownId), eq(CONFIRMING), anyString());
+        order.verify(account).capture(ownId);
+        order.verify(store).move(eq(ownId), eq(SUCCESS), anyString());
+        verify(fraud, never()).check(any());
+        verify(processing, never()).transfer(any(), any());
+    }
+
+    @Test
     void businessRejectOnReserveFailsWithoutCompensation() {
         org.mockito.Mockito.doThrow(new AccountRejectedException("LIMIT_EXCEEDED", "Превышен дневной лимит"))
                 .when(account).reserve(payment);

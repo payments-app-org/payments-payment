@@ -74,8 +74,11 @@ public class PaymentController {
         Payment payment;
         try {
             // Шаг 2.2–2.4. Котировка, реквизиты, создание платежа — до внешних вызовов, чтобы остался след
+            // Тариф зависел от получателя: карта (перевод по карте) или свой счёт зачисления
+            String recipientKey = req.type() == PaymentType.OWN_TRANSFER && req.destinationAccountId() != null
+                    ? req.destinationAccountId().toString() : req.recipientCardNumber();
             Quote quote = quotes.verify(req.quoteToken(), userId, req.sourceAccountId(), req.type().name(), req.amount(),
-                    req.recipientCardNumber());
+                    recipientKey);
             Requisites.validate(req);
             payment = createPayment(userId, req, quote, key);
         } catch (PaymentException e) {
@@ -103,10 +106,18 @@ public class PaymentController {
         Optional<Recipient> recipient;
         String senderName;
         try {
-            senderName = account.displayName(userId);
-            recipient = req.type() == PaymentType.SBP_PHONE
-                    ? account.findRecipientByPhone(req.recipientPhone())
-                    : account.findRecipientByCard(req.recipientCardNumber());
+            if (req.type() == PaymentType.OWN_TRANSFER) {
+                // Стороны — свои счета: в истории будет «С Зарплатная ·· 3752» / «На Мой кошелёк»
+                var titles = account.accountTitles(userId);
+                senderName = "С " + titles.getOrDefault(req.sourceAccountId(), "своего счёта");
+                recipient = Optional.of(new Recipient(userId, "На " + titles.getOrDefault(req.destinationAccountId(), "свой счёт"),
+                        req.destinationAccountId(), null));
+            } else {
+                senderName = account.displayName(userId);
+                recipient = req.type() == PaymentType.SBP_PHONE
+                        ? account.findRecipientByPhone(req.recipientPhone())
+                        : account.findRecipientByCard(req.recipientCardNumber());
+            }
         } catch (RestClientException e) {
             throw new PaymentException(SERVICE_UNAVAILABLE, "Сервис счетов недоступен, попробуйте позже");
         }

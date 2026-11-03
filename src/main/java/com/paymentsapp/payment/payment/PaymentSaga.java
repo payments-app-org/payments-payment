@@ -51,6 +51,12 @@ public class PaymentSaga {
         }
         payment = store.move(id, RESERVED, "Средства зарезервированы: " + payment.getTotal());
 
+        // Между своими счетами деньги не покидают банк: сразу списание и зачисление в account
+        if (payment.getType() == PaymentType.OWN_TRANSFER) {
+            store.move(id, CONFIRMING, "Перевод между своими счетами — без антифрода и процессинга");
+            return confirm(id);
+        }
+
         // Шаг 4. Антифрод
         FraudDecision decision;
         try {

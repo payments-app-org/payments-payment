@@ -64,6 +64,18 @@ public class AccountClient {
         return user.path("displayName").asString(null);
     }
 
+    // Названия счетов пользователя: «Мой кошелёк», «Зарплатная WEEKEND ·· 3752»
+    public Map<UUID, String> accountTitles(UUID userId) {
+        JsonNode user = rest.get().uri("/api/users/{userId}", userId).retrieve().body(JsonNode.class);
+        Map<UUID, String> titles = new HashMap<>();
+        for (JsonNode a : user.path("accounts")) {
+            String last4 = a.path("cardLast4").asString(null);
+            titles.put(UUID.fromString(a.path("id").asString()),
+                    a.path("title").asString() + (last4 == null ? "" : " ·· " + last4));
+        }
+        return titles;
+    }
+
     private Optional<Recipient> findRecipient(String param, String value) {
         return Optional.ofNullable(rest.get()
                 // Значение — через переменную шаблона: так «+» в телефоне кодируется как %2B, а не теряется как пробел
