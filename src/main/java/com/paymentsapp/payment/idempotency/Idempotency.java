@@ -30,6 +30,12 @@ public class Idempotency {
         keys.findById(key).orElseThrow().linkPayment(paymentId);
     }
 
+    // Временный сбой до создания платежа: освобождаем ключ, чтобы повтор с ним прошёл заново
+    @Transactional
+    public void release(String key) {
+        keys.deleteById(key);
+    }
+
     @Transactional
     public void saveResponse(String key, int status, String body) {
         keys.findById(key).orElseThrow().saveResponse(status, body);

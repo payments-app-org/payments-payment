@@ -26,6 +26,10 @@ public class Payment {
     private PaymentStatus status;
 
     private UUID sourceAccountId;
+    private String senderName;
+    private UUID recipientUserId;
+    private UUID recipientAccountId;
+    private String recipientName;
     private String recipientPhone;
     private String recipientBankId;
     private String recipientCardMask;
@@ -35,6 +39,7 @@ public class Payment {
     private BigDecimal total;
     private String currency;
     private UUID quoteId;
+    private String message;
     private String processingId;
 
     @Enumerated(EnumType.STRING)
@@ -55,11 +60,22 @@ public class Payment {
     public Payment(UUID userId, PaymentType type, UUID sourceAccountId, String recipientPhone, String recipientBankId,
                    String recipientCardMask, BigDecimal amount, BigDecimal commissionAmount, int commissionTariffId,
                    String currency, UUID quoteId) {
+        this(userId, type, sourceAccountId, Parties.external(null), recipientPhone, recipientBankId, recipientCardMask,
+                amount, commissionAmount, commissionTariffId, currency, quoteId, null);
+    }
+
+    public Payment(UUID userId, PaymentType type, UUID sourceAccountId, Parties parties, String recipientPhone,
+                   String recipientBankId, String recipientCardMask, BigDecimal amount, BigDecimal commissionAmount,
+                   int commissionTariffId, String currency, UUID quoteId, String message) {
         this.id = UUID.randomUUID();
         this.userId = userId;
         this.type = type;
         this.status = PaymentStatus.CREATED;
         this.sourceAccountId = sourceAccountId;
+        this.senderName = parties.senderName();
+        this.recipientUserId = parties.recipientUserId();
+        this.recipientAccountId = parties.recipientAccountId();
+        this.recipientName = parties.recipientName();
         this.recipientPhone = recipientPhone;
         this.recipientBankId = recipientBankId;
         this.recipientCardMask = recipientCardMask;
@@ -69,8 +85,17 @@ public class Payment {
         this.total = amount.add(commissionAmount);
         this.currency = currency;
         this.quoteId = quoteId;
+        this.message = message;
         this.createdAt = OffsetDateTime.now();
         this.updatedAt = createdAt;
+    }
+
+    // Кто платит и кому. Получатель-клиент нашего банка — есть userId и карта для зачисления.
+    public record Parties(String senderName, UUID recipientUserId, UUID recipientAccountId, String recipientName) {
+
+        public static Parties external(String senderName) {
+            return new Parties(senderName, null, null, null);
+        }
     }
 
     void moveTo(PaymentStatus to) {
@@ -95,6 +120,11 @@ public class Payment {
     public PaymentType getType() { return type; }
     public PaymentStatus getStatus() { return status; }
     public UUID getSourceAccountId() { return sourceAccountId; }
+    public String getSenderName() { return senderName; }
+    public UUID getRecipientUserId() { return recipientUserId; }
+    public UUID getRecipientAccountId() { return recipientAccountId; }
+    public String getRecipientName() { return recipientName; }
+    public String getMessage() { return message; }
     public String getRecipientPhone() { return recipientPhone; }
     public String getRecipientBankId() { return recipientBankId; }
     public String getRecipientCardMask() { return recipientCardMask; }
@@ -107,5 +137,6 @@ public class Payment {
     public String getProcessingId() { return processingId; }
     public FailureCode getFailureCode() { return failureCode; }
     public String getFailureReason() { return failureReason; }
+    public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
 }

@@ -2,7 +2,9 @@ package com.paymentsapp.payment.client;
 
 import com.paymentsapp.payment.payment.Payment;
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatusCode;
@@ -27,15 +29,17 @@ public class AccountClient {
     }
 
     public void reserve(Payment p) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("paymentId", p.getId());
+        body.put("userId", p.getUserId());
+        body.put("accountId", p.getSourceAccountId());
+        body.put("recipientAccountId", p.getRecipientAccountId());
+        body.put("operationType", p.getType().name());
+        body.put("amount", p.getAmount());
+        body.put("commission", p.getCommissionAmount());
+        body.put("currency", p.getCurrency());
         rest.post().uri("/api/internal/reservations")
-                .body(Map.of(
-                        "paymentId", p.getId(),
-                        "userId", p.getUserId(),
-                        "accountId", p.getSourceAccountId(),
-                        "operationType", p.getType().name(),
-                        "amount", p.getAmount(),
-                        "commission", p.getCommissionAmount(),
-                        "currency", p.getCurrency()))
+                .body(body)
                 .retrieve()
                 .onStatus(HttpStatusCode::is4xxClientError, (req, res) -> {
                     JsonNode problem = json.readTree(res.getBody());
@@ -43,6 +47,34 @@ public class AccountClient {
                             problem.path("detail").asString("Отказ сервиса account"));
                 })
                 .toBodilessEntity();
+    }
+
+    // Наш ли клиент получатель. Пусто — реквизиты не наши, перевод уйдёт в другой банк.
+    public Optional<Recipient> findRecipientByPhone(String phone) {
+        return findRecipient("phone", phone);
+    }
+
+    public Optional<Recipient> findRecipientByCard(String cardNumber) {
+        return findRecipient("cardNumber", cardNumber);
+    }
+
+    // Имя отправителя, как его увидит получатель
+    public String displayName(UUID userId) {
+        JsonNode user = rest.get().uri("/api/users/{userId}", userId).retrieve().body(JsonNode.class);
+        return user.path("displayName").asString(null);
+    }
+
+    private Optional<Recipient> findRecipient(String param, String value) {
+        return Optional.ofNullable(rest.get()
+                // Значение — через переменную шаблона: так «+» в телефоне кодируется как %2B, а не теряется как пробел
+                .uri("/api/internal/recipients?" + param + "={value}", value)
+                .retrieve()
+                .onStatus(status -> status.value() == 404, (req, res) -> {
+                })
+                .body(Recipient.class));
+    }
+
+    public record Recipient(UUID userId, String displayName, UUID accountId, String sbpBankId) {
     }
 
     public void capture(UUID paymentId) {

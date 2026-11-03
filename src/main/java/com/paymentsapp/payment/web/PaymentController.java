@@ -2,12 +2,15 @@ package com.paymentsapp.payment.web;
 
 import static com.paymentsapp.payment.web.PaymentException.Code.*;
 
+import com.paymentsapp.payment.client.AccountClient;
+import com.paymentsapp.payment.client.AccountClient.Recipient;
 import com.paymentsapp.payment.idempotency.Idempotency;
 import com.paymentsapp.payment.idempotency.IdempotencyKey;
 import com.paymentsapp.payment.payment.Payment;
 import com.paymentsapp.payment.payment.PaymentRepository;
 import com.paymentsapp.payment.payment.PaymentSaga;
 import com.paymentsapp.payment.payment.PaymentStore;
+import com.paymentsapp.payment.payment.PaymentType;
 import com.paymentsapp.payment.quote.Quote;
 import com.paymentsapp.payment.quote.QuoteVerifier;
 import jakarta.validation.Valid;
@@ -30,6 +33,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.client.RestClientException;
 import tools.jackson.databind.json.JsonMapper;
 
 // Авторизации пока нет: пользователя передаёт фронтенд в X-User-Id
@@ -43,15 +47,17 @@ public class PaymentController {
     private final PaymentStore store;
     private final PaymentRepository payments;
     private final PaymentSaga saga;
+    private final AccountClient account;
     private final JsonMapper json;
 
     public PaymentController(Idempotency idempotency, QuoteVerifier quotes, PaymentStore store,
-                             PaymentRepository payments, PaymentSaga saga, JsonMapper json) {
+                             PaymentRepository payments, PaymentSaga saga, AccountClient account, JsonMapper json) {
         this.idempotency = idempotency;
         this.quotes = quotes;
         this.store = store;
         this.payments = payments;
         this.saga = saga;
+        this.account = account;
         this.json = json;
     }
 
@@ -72,7 +78,11 @@ public class PaymentController {
             Requisites.validate(req);
             payment = createPayment(userId, req, quote, key);
         } catch (PaymentException e) {
-            idempotency.saveResponse(key, e.getStatus().value(), json.writeValueAsString(problem(e)));
+            if (e.getCode() == SERVICE_UNAVAILABLE) {
+                idempotency.release(key);
+            } else {
+                idempotency.saveResponse(key, e.getStatus().value(), json.writeValueAsString(problem(e)));
+            }
             throw e;
         }
 
@@ -89,9 +99,31 @@ public class PaymentController {
     }
 
     private Payment createPayment(UUID userId, PaymentRequest req, Quote quote, String key) {
-        Payment payment = new Payment(userId, req.type(), req.sourceAccountId(), req.recipientPhone(),
-                req.recipientBankId(), req.recipientCardNumber() == null ? null : Requisites.maskCard(req.recipientCardNumber()),
-                req.amount(), quote.commission(), quote.tariffId(), req.currencyOrDefault(), quote.quoteId());
+        Optional<Recipient> recipient;
+        String senderName;
+        try {
+            senderName = account.displayName(userId);
+            recipient = req.type() == PaymentType.SBP_PHONE
+                    ? account.findRecipientByPhone(req.recipientPhone())
+                    : account.findRecipientByCard(req.recipientCardNumber());
+        } catch (RestClientException e) {
+            throw new PaymentException(SERVICE_UNAVAILABLE, "Сервис счетов недоступен, попробуйте позже");
+        }
+
+        // Банк из списка — берём его; не выбран — банк по умолчанию получателя
+        String bankId = req.recipientBankId();
+        if (req.type() == PaymentType.SBP_PHONE && bankId == null) {
+            bankId = recipient.map(Recipient::sbpBankId).orElseThrow(() -> new PaymentException(RECIPIENT_BANK_UNKNOWN,
+                    "Не удалось определить банк получателя, выберите банк из списка"));
+        }
+        Payment.Parties parties = recipient
+                .map(r -> new Payment.Parties(senderName, r.userId(), r.accountId(), r.displayName()))
+                .orElse(Payment.Parties.external(senderName));
+
+        Payment payment = new Payment(userId, req.type(), req.sourceAccountId(), parties, req.recipientPhone(), bankId,
+                req.recipientCardNumber() == null ? null : Requisites.maskCard(req.recipientCardNumber()),
+                req.amount(), quote.commission(), quote.tariffId(), req.currencyOrDefault(), quote.quoteId(),
+                req.message() == null || req.message().isBlank() ? null : req.message().trim());
         try {
             return store.create(payment, key);
         } catch (DataIntegrityViolationException e) {

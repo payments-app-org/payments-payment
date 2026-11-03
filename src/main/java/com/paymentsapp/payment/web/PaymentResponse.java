@@ -15,6 +15,8 @@ public record PaymentResponse(
         BigDecimal amount,
         BigDecimal commission,
         BigDecimal total,
+        String recipientName,
+        String recipientBankId,
         FailureCode failureCode,
         String message
 ) {
@@ -27,7 +29,7 @@ public record PaymentResponse(
             default -> "Перевод обрабатывается";
         };
         return new PaymentResponse(p.getId(), p.getType(), p.getStatus(), p.getAmount(), p.getCommissionAmount(),
-                p.getTotal(), p.getFailureCode(), message);
+                p.getTotal(), p.getRecipientName(), p.getRecipientBankId(), p.getFailureCode(), message);
     }
 
     // 200 — платёж завершён (успешно или нет), 202 — ещё в процессе

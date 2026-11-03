@@ -20,8 +20,8 @@ final class Requisites {
             case SBP_PHONE -> {
                 require(req.recipientPhone() != null && PHONE.matcher(req.recipientPhone()).matches(),
                         "Телефон получателя в формате +7XXXXXXXXXX");
-                require(req.recipientBankId() != null && BANK_ID.matcher(req.recipientBankId()).matches(),
-                        "Не выбран банк получателя");
+                require(req.recipientBankId() == null || BANK_ID.matcher(req.recipientBankId()).matches(),
+                        "Некорректный банк получателя");
                 require(req.recipientCardNumber() == null, "Для перевода по телефону номер карты не нужен");
             }
             case CARD2CARD -> {
