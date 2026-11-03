@@ -106,12 +106,14 @@ public class PaymentController {
         Optional<Recipient> recipient;
         String senderName;
         boolean sourceExternal;
+        boolean destinationExternal = false;
         try {
             AccountClient.UserInfo user = account.user(userId);
             sourceExternal = user.isExternal(req.sourceAccountId());
             if (req.type() == PaymentType.OWN_TRANSFER) {
                 // Стороны — свои счета: в истории будет «С Зарплатная ·· 3752» / «На Мой кошелёк»
                 senderName = "С " + user.title(req.sourceAccountId(), "своего счёта");
+                destinationExternal = user.isExternal(req.destinationAccountId());
                 recipient = Optional.of(new Recipient(userId, "На " + user.title(req.destinationAccountId(), "свой счёт"),
                         req.destinationAccountId(), null));
             } else {
@@ -133,7 +135,7 @@ public class PaymentController {
         Payment.Parties parties = recipient
                 .map(r -> new Payment.Parties(senderName, r.userId(), r.accountId(), r.displayName()))
                 .orElse(Payment.Parties.external(senderName))
-                .withSourceExternal(sourceExternal);
+                .withExternal(sourceExternal, destinationExternal);
 
         Payment payment = new Payment(userId, req.type(), req.sourceAccountId(), parties, req.recipientPhone(), bankId,
                 req.recipientCardNumber() == null ? null : Requisites.maskCard(req.recipientCardNumber()),

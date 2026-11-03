@@ -89,6 +89,8 @@ public class PaymentStore {
         data.put("recipientBankId", p.getRecipientBankId());
         data.put("recipientCardMask", p.getRecipientCardMask());
         data.put("message", p.getMessage());
+        data.put("sourceExternal", p.isSourceExternal());
+        data.put("destinationExternal", p.isDestinationExternal());
         data.put("createdAt", p.getCreatedAt());
         data.put("amount", p.getAmount());
         data.put("commission", p.getCommissionAmount());

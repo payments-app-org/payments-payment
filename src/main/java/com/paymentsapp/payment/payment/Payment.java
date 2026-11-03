@@ -28,6 +28,8 @@ public class Payment {
     private UUID sourceAccountId;
     // Списание с привязанной карты другого банка — его проводит процессинг
     private boolean sourceExternal;
+    // Зачисление на привязанную карту другого банка — его тоже проводит процессинг
+    private boolean destinationExternal;
     private String senderName;
     private UUID recipientUserId;
     private UUID recipientAccountId;
@@ -75,6 +77,7 @@ public class Payment {
         this.status = PaymentStatus.CREATED;
         this.sourceAccountId = sourceAccountId;
         this.sourceExternal = parties.sourceExternal();
+        this.destinationExternal = parties.destinationExternal();
         this.senderName = parties.senderName();
         this.recipientUserId = parties.recipientUserId();
         this.recipientAccountId = parties.recipientAccountId();
@@ -94,20 +97,25 @@ public class Payment {
     }
 
     // Кто платит и кому. Получатель-клиент нашего банка — есть userId и карта для зачисления.
-    // sourceExternal — списываем с привязанной карты другого банка.
+    // sourceExternal / destinationExternal — списываем с / зачисляем на привязанную карту другого банка.
     public record Parties(String senderName, UUID recipientUserId, UUID recipientAccountId, String recipientName,
-                          boolean sourceExternal) {
+                          boolean sourceExternal, boolean destinationExternal) {
 
         public Parties(String senderName, UUID recipientUserId, UUID recipientAccountId, String recipientName) {
-            this(senderName, recipientUserId, recipientAccountId, recipientName, false);
+            this(senderName, recipientUserId, recipientAccountId, recipientName, false, false);
+        }
+
+        public Parties(String senderName, UUID recipientUserId, UUID recipientAccountId, String recipientName,
+                       boolean sourceExternal) {
+            this(senderName, recipientUserId, recipientAccountId, recipientName, sourceExternal, false);
         }
 
         public static Parties external(String senderName) {
             return new Parties(senderName, null, null, null);
         }
 
-        public Parties withSourceExternal(boolean value) {
-            return new Parties(senderName, recipientUserId, recipientAccountId, recipientName, value);
+        public Parties withExternal(boolean source, boolean destination) {
+            return new Parties(senderName, recipientUserId, recipientAccountId, recipientName, source, destination);
         }
     }
 
@@ -134,6 +142,12 @@ public class Payment {
     public PaymentStatus getStatus() { return status; }
     public UUID getSourceAccountId() { return sourceAccountId; }
     public boolean isSourceExternal() { return sourceExternal; }
+    public boolean isDestinationExternal() { return destinationExternal; }
+
+    // Деньги не покидают банк — можно без антифрода и процессинга
+    public boolean staysInBank() {
+        return type == PaymentType.OWN_TRANSFER && !sourceExternal && !destinationExternal;
+    }
     public String getSenderName() { return senderName; }
     public UUID getRecipientUserId() { return recipientUserId; }
     public UUID getRecipientAccountId() { return recipientAccountId; }

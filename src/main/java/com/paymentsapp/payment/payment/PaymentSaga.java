@@ -52,8 +52,8 @@ public class PaymentSaga {
         payment = store.move(id, RESERVED, "Средства зарезервированы: " + payment.getTotal());
 
         // Между своими счетами деньги не покидают банк: сразу списание и зачисление в account.
-        // Исключение — списание с привязанной карты другого банка: деньги с неё забирает процессинг.
-        if (payment.getType() == PaymentType.OWN_TRANSFER && !payment.isSourceExternal()) {
+        // Исключение — привязанная карта другого банка с любой стороны: деньги двигает процессинг.
+        if (payment.staysInBank()) {
             store.move(id, CONFIRMING, "Перевод между своими счетами — без антифрода и процессинга");
             return confirm(id);
         }
