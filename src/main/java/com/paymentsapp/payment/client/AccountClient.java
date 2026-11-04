@@ -79,7 +79,7 @@ public class AccountClient {
 
         public boolean isExternal(UUID accountId) {
             AccountInfo a = accounts.get(accountId);
-            return a != null && "EXTERNAL_CARD".equals(a.type());
+            return a != null && ("EXTERNAL_CARD".equals(a.type()) || "EXTERNAL_SBP".equals(a.type()));
         }
     }
 
