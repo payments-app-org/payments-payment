@@ -54,6 +54,15 @@ public class ProcessingClient {
         }
     }
 
+    // Справочник СБП: в каких банках у владельца телефона есть счёт
+    public java.util.List<String> sbpBanks(String phone) {
+        SbpBanks banks = rest.get().uri("/api/processing/sbp/banks?phone={phone}", phone).retrieve().body(SbpBanks.class);
+        return banks == null ? java.util.List.of() : banks.banks();
+    }
+
+    public record SbpBanks(String phone, java.util.List<String> banks) {
+    }
+
     public record TransferResult(String status, String externalId, String reason) {
 
         public boolean completed() {

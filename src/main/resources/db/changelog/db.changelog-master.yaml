@@ -17,3 +17,9 @@ databaseChangeLog:
   - include:
       file: changes/006-abroad.sql
       relativeToChangelogFile: true
+  - include:
+      file: changes/007-wallet-requisites-uin.sql
+      relativeToChangelogFile: true
+  - include:
+      file: changes/008-bill-once.sql
+      relativeToChangelogFile: true

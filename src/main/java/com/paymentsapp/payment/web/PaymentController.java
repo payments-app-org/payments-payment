@@ -5,6 +5,7 @@ import static com.paymentsapp.payment.web.PaymentException.Code.*;
 import com.paymentsapp.payment.client.AccountClient;
 import com.paymentsapp.payment.client.AccountClient.Recipient;
 import com.paymentsapp.payment.client.BillerClient;
+import com.paymentsapp.payment.client.ProcessingClient;
 import com.paymentsapp.payment.idempotency.Idempotency;
 import com.paymentsapp.payment.idempotency.IdempotencyKey;
 import com.paymentsapp.payment.payment.Payment;
@@ -33,6 +34,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestClientException;
 import tools.jackson.databind.json.JsonMapper;
@@ -50,11 +52,12 @@ public class PaymentController {
     private final PaymentSaga saga;
     private final AccountClient account;
     private final BillerClient biller;
+    private final ProcessingClient processing;
     private final JsonMapper json;
 
     public PaymentController(Idempotency idempotency, QuoteVerifier quotes, PaymentStore store,
                              PaymentRepository payments, PaymentSaga saga, AccountClient account, BillerClient biller,
-                             JsonMapper json) {
+                             ProcessingClient processing, JsonMapper json) {
         this.idempotency = idempotency;
         this.quotes = quotes;
         this.store = store;
@@ -62,6 +65,7 @@ public class PaymentController {
         this.saga = saga;
         this.account = account;
         this.biller = biller;
+        this.processing = processing;
         this.json = json;
     }
 
@@ -103,6 +107,16 @@ public class PaymentController {
         return respond(saga.run(payment, cardForProcessing));
     }
 
+    // Справочник СБП для формы: в каких банках у владельца телефона есть счёт (перевод возможен только туда)
+    @GetMapping("/sbp/banks")
+    public java.util.Map<String, Object> sbpBanks(@RequestParam String phone) {
+        try {
+            return java.util.Map.of("phone", phone, "banks", processing.sbpBanks(phone));
+        } catch (RestClientException e) {
+            throw new PaymentException(SERVICE_UNAVAILABLE, "Не удалось проверить банк получателя, попробуйте позже");
+        }
+    }
+
     @GetMapping("/{paymentId}")
     public ResponseEntity<PaymentResponse> get(@RequestHeader("X-User-Id") UUID userId, @PathVariable UUID paymentId) {
         Payment p = payments.findById(paymentId)
@@ -135,7 +149,18 @@ public class PaymentController {
                 destinationExternal = user.isExternal(req.destinationAccountId());
                 recipient = Optional.of(new Recipient(userId, "На " + user.title(req.destinationAccountId(), "свой счёт"),
                         req.destinationAccountId(), null));
-            } else if (req.type() == PaymentType.ABROAD) {
+            } else if (req.type() == PaymentType.WALLET_TRANSFER) {
+                // На «Мой кошелёк» другого клиента: ищем его по телефону
+                senderName = user.displayName();
+                Recipient r = account.findRecipientByPhone(req.recipientPhone())
+                        .filter(x -> x.walletAccountId() != null)
+                        .orElseThrow(() -> new PaymentException(RECIPIENT_NOT_FOUND, "Кошелёк с таким номером не найден"));
+                if (r.userId().equals(userId)) {
+                    throw new PaymentException(RECIPIENT_NOT_FOUND, "Это ваш кошелёк — пополните его переводом между своими счетами");
+                }
+                recipient = Optional.of(new Recipient(r.userId(), r.displayName(), r.walletAccountId(), null));
+            } else if (req.type() != PaymentType.SBP_PHONE && req.type() != PaymentType.CARD2CARD) {
+                // За рубеж, юрлицу, в бюджет — получатель не наш клиент
                 // Получатель за рубежом — не наш клиент
                 senderName = user.displayName();
                 recipient = Optional.empty();
@@ -155,9 +180,59 @@ public class PaymentController {
             bankId = recipient.map(Recipient::sbpBankId).orElseThrow(() -> new PaymentException(RECIPIENT_BANK_UNKNOWN,
                     "Не удалось определить банк получателя, выберите банк из списка"));
         }
+        // СБП: у получателя должен быть счёт в выбранном банке (справочник НСПК — у процессинга)
+        if (req.type() == PaymentType.SBP_PHONE) {
+            java.util.List<String> banks;
+            try {
+                banks = processing.sbpBanks(req.recipientPhone());
+            } catch (RestClientException e) {
+                throw new PaymentException(SERVICE_UNAVAILABLE, "Не удалось проверить банк получателя, попробуйте позже");
+            }
+            if (!banks.contains(bankId)) {
+                throw new PaymentException(RECIPIENT_BANK_NOT_FOUND, "У получателя нет счёта в этом банке");
+            }
+        }
+
+        // Юрлицу и в бюджет: проверенные реквизиты, имя получателя и назначение платежа
+        RuRequisites.Checked requisites = null;
+        String billReference = null;
+        if (req.type() == PaymentType.REQUISITES || req.type() == PaymentType.REQUISITES_OUR) {
+            requisites = RuRequisites.check(req.recipientFields(), req.type() == PaymentType.REQUISITES_OUR, json);
+        } else if (req.type() == PaymentType.UIN_PAYMENT) {
+            BillerClient.GovCharge charge;
+            try {
+                charge = biller.govCharge(req.chargeId())
+                        .orElseThrow(() -> new PaymentException(BILL_NOT_PAYABLE, "Начисление не найдено"));
+            } catch (RestClientException e) {
+                throw new PaymentException(SERVICE_UNAVAILABLE, "Справочник начислений недоступен, попробуйте позже");
+            }
+            if (!"UNPAID".equals(charge.status())) {
+                throw new PaymentException(BILL_NOT_PAYABLE, "Начисление уже оплачено");
+            }
+            if (charge.payableAmount().compareTo(req.amount()) != 0) {
+                throw new PaymentException(BILL_NOT_PAYABLE, "Сумма не совпадает с начислением: " + charge.payableAmount() + " ₽");
+            }
+            var details = new java.util.LinkedHashMap<String, String>();
+            details.put("uin", charge.uin());
+            details.put("name", charge.payeeName());
+            details.put("inn", charge.payeeInn());
+            details.put("kpp", charge.payeeKpp());
+            details.put("account", charge.payeeAccount());
+            details.put("bik", charge.payeeBik());
+            details.put("kbk", charge.kbk());
+            details.put("oktmo", charge.oktmo());
+            requisites = new RuRequisites.Checked(json.writeValueAsString(details), charge.payeeName(), charge.purpose());
+            billReference = charge.uin() + "/" + charge.id();
+            if (payments.existsByBillReferenceAndStatusNot(billReference, com.paymentsapp.payment.payment.PaymentStatus.FAILED)) {
+                throw new PaymentException(BILL_NOT_PAYABLE, "Это начисление уже оплачено или оплачивается");
+            }
+        }
+        final RuRequisites.Checked payee = requisites;
+
         Payment.Parties parties = recipient
                 .map(r -> new Payment.Parties(senderName, r.userId(), r.accountId(), r.displayName()))
                 .orElse(abroad != null ? new Payment.Parties(senderName, null, null, abroad.recipientName())
+                        : payee != null ? new Payment.Parties(senderName, null, null, payee.recipientName())
                         : Payment.Parties.external(senderName))
                 .withExternal(sourceExternal, destinationExternal);
 
@@ -168,9 +243,15 @@ public class PaymentController {
         if (abroad != null) {
             payment.setAbroad(abroad.abroad());
         }
+        if (payee != null) {
+            payment.setRequisites(payee.json(), payee.purpose(), billReference);
+        }
         try {
             return store.create(payment, key);
         } catch (DataIntegrityViolationException e) {
+            if (String.valueOf(e.getMessage()).contains("payments_bill_once_uq")) {
+                throw new PaymentException(BILL_NOT_PAYABLE, "Это начисление уже оплачено или оплачивается");
+            }
             // Уникальный индекс по quote_id: по этой котировке уже платили
             throw new PaymentException(QUOTE_ALREADY_USED, "Эта котировка уже использована, пересчитайте комиссию");
         }

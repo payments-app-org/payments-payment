@@ -90,6 +90,8 @@ public class PaymentStore {
         data.put("recipientCardMask", p.getRecipientCardMask());
         data.put("message", p.getMessage());
         data.put("sourceExternal", p.isSourceExternal());
+        data.put("purpose", p.getPurpose());
+        data.put("billReference", p.getBillReference());
         if (p.getType() == PaymentType.ABROAD) {
             data.put("country", p.getCountry());
             data.put("receiveCurrency", p.getReceiveCurrency());

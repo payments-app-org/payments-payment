@@ -96,7 +96,12 @@ public class AccountClient {
                 .body(Recipient.class));
     }
 
-    public record Recipient(UUID userId, String displayName, UUID accountId, String sbpBankId) {
+    // walletAccountId — «Мой кошелёк» получателя (только при поиске по телефону)
+    public record Recipient(UUID userId, String displayName, UUID accountId, String sbpBankId, UUID walletAccountId) {
+
+        public Recipient(UUID userId, String displayName, UUID accountId, String sbpBankId) {
+            this(userId, displayName, accountId, sbpBankId, null);
+        }
     }
 
     public void capture(UUID paymentId) {

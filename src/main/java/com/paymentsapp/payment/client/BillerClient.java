@@ -28,6 +28,20 @@ public class BillerClient {
         }
     }
 
+    // Начисление госуслуг по id — сумму и получателя берём отсюда, а не из запроса
+    public Optional<GovCharge> govCharge(java.util.UUID id) {
+        try {
+            return Optional.ofNullable(rest.get().uri("/api/biller/gov/charges/{id}", id).retrieve().body(GovCharge.class));
+        } catch (HttpClientErrorException.NotFound e) {
+            return Optional.empty();
+        }
+    }
+
+    public record GovCharge(java.util.UUID id, String uin, String purpose, String payeeName, String payeeInn,
+                            String payeeKpp, String payeeAccount, String payeeBik, String kbk, String oktmo,
+                            java.math.BigDecimal payableAmount, String status) {
+    }
+
     public record MethodDetails(Method method, List<String> currencies, List<Field> fields) {
     }
 

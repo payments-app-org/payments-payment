@@ -27,7 +27,10 @@ public record PaymentRequest(
         String receiveCurrency,
         BigDecimal receiveAmount,
         Integer transferMethodId,
-        java.util.Map<String, String> recipientFields
+        // Поля получателя: за рубеж — по шаблону способа; юрлицу — account, bik, inn, name, kpp, purpose, payerName, payerInn
+        java.util.Map<String, String> recipientFields,
+        // Госуслуги: id начисления из biller
+        UUID chargeId
 ) {
 
     public String currencyOrDefault() {

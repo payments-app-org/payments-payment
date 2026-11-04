@@ -15,7 +15,13 @@ final class Requisites {
     private Requisites() {
     }
 
+    // Минимальная сумма почти любого платежа
+    static final java.math.BigDecimal MIN_AMOUNT = java.math.BigDecimal.TEN;
+
     static void validate(PaymentRequest req) {
+        if (req.amount().compareTo(MIN_AMOUNT) < 0) {
+            throw new PaymentException(PaymentException.Code.INVALID_AMOUNT, "Минимальная сумма — 10 ₽");
+        }
         switch (req.type()) {
             case SBP_PHONE -> {
                 require(req.recipientPhone() != null && PHONE.matcher(req.recipientPhone()).matches(),
@@ -36,6 +42,11 @@ final class Requisites {
                 require(req.recipientPhone() == null && req.recipientBankId() == null && req.recipientCardNumber() == null
                         && req.destinationAccountId() == null, "Данные получателя передаются в recipientFields");
             }
+            case WALLET_TRANSFER -> require(req.recipientPhone() != null && PHONE.matcher(req.recipientPhone()).matches(),
+                    "Телефон получателя в формате +7XXXXXXXXXX");
+            case REQUISITES, REQUISITES_OUR -> require(req.recipientFields() != null && !req.recipientFields().isEmpty(),
+                    "Заполните реквизиты получателя");
+            case UIN_PAYMENT -> require(req.chargeId() != null, "Не выбрано начисление");
             case OWN_TRANSFER -> {
                 require(req.destinationAccountId() != null, "Не выбран счёт зачисления");
                 require(!req.destinationAccountId().equals(req.sourceAccountId()), "Нельзя перевести на тот же счёт");

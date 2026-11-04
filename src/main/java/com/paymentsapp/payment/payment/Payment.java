@@ -56,6 +56,8 @@ public class Payment {
     // Данные получателя по полям способа перевода; номера карт — маской
     @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
     private String recipientDetails;
+    private String purpose;
+    private String billReference;
 
     @Enumerated(EnumType.STRING)
     private FailureCode failureCode;
@@ -172,7 +174,14 @@ public class Payment {
 
     // Деньги не покидают банк — можно без антифрода и процессинга
     public boolean staysInBank() {
-        return type == PaymentType.OWN_TRANSFER && !sourceExternal && !destinationExternal;
+        return (type == PaymentType.OWN_TRANSFER || type == PaymentType.WALLET_TRANSFER) && !sourceExternal && !destinationExternal;
+    }
+
+    // Реквизиты получателя (юрлицо, бюджет) и назначение платежа
+    public void setRequisites(String detailsJson, String purpose, String billReference) {
+        this.recipientDetails = detailsJson;
+        this.purpose = purpose;
+        this.billReference = billReference;
     }
     public String getSenderName() { return senderName; }
     public UUID getRecipientUserId() { return recipientUserId; }
@@ -199,5 +208,7 @@ public class Payment {
     public Integer getTransferMethodId() { return transferMethodId; }
     public String getTransferMethodName() { return transferMethodName; }
     public String getRecipientDetails() { return recipientDetails; }
+    public String getPurpose() { return purpose; }
+    public String getBillReference() { return billReference; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
 }
