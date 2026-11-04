@@ -36,7 +36,8 @@ public class AccountClient {
         body.put("recipientAccountId", p.getRecipientAccountId());
         body.put("operationType", p.getType().name());
         body.put("amount", p.getAmount());
-        body.put("commission", p.getCommissionAmount());
+        // К комиссии в резерве добавляем округление на пользу: списать нужно всё вместе
+        body.put("commission", p.getCommissionAmount().add(p.getRoundUpAmount()));
         body.put("currency", p.getCurrency());
         rest.post().uri("/api/internal/reservations")
                 .body(body)
@@ -67,10 +68,16 @@ public class AccountClient {
             accounts.put(UUID.fromString(a.path("id").asString()), new AccountInfo(
                     a.path("title").asString() + (last4 == null ? "" : " ·· " + last4), a.path("type").asString()));
         }
-        return new UserInfo(user.path("displayName").asString(null), accounts);
+        JsonNode r = user.path("roundup");
+        Roundup roundup = r.isObject() ? new Roundup(r.path("step").asInt(), r.path("fundCode").asString(), r.path("fundName").asString()) : null;
+        return new UserInfo(user.path("displayName").asString(null), accounts, roundup);
     }
 
-    public record UserInfo(String displayName, Map<UUID, AccountInfo> accounts) {
+    // «Округление на пользу»: шаг и фонд
+    public record Roundup(int step, String fundCode, String fundName) {
+    }
+
+    public record UserInfo(String displayName, Map<UUID, AccountInfo> accounts, Roundup roundup) {
 
         public String title(UUID accountId, String fallback) {
             AccountInfo a = accounts.get(accountId);

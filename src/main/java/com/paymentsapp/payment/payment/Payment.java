@@ -63,6 +63,10 @@ public class Payment {
     private String providerGroup;
     @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
     private String billFields;
+    // «Округление на пользу»: сколько добавили к покупке и в какой фонд это уйдёт
+    private BigDecimal roundUpAmount = BigDecimal.ZERO;
+    private String roundUpFundCode;
+    private String roundUpFundName;
 
     @Enumerated(EnumType.STRING)
     private FailureCode failureCode;
@@ -218,6 +222,22 @@ public class Payment {
     public String getProviderCode() { return providerCode; }
     public String getProviderGroup() { return providerGroup; }
     public String getBillFields() { return billFields; }
+    public BigDecimal getRoundUpAmount() { return roundUpAmount; }
+    public String getRoundUpFundCode() { return roundUpFundCode; }
+    public String getRoundUpFundName() { return roundUpFundName; }
+
+    // Разницу округления добавляем к списанию
+    public void setRoundUp(BigDecimal amount, String fundCode, String fundName) {
+        this.roundUpAmount = amount;
+        this.roundUpFundCode = fundCode;
+        this.roundUpFundName = fundName;
+        this.total = this.amount.add(commissionAmount).add(amount);
+    }
+
+    // Пожертвование фонду: деньги остаются в банке до вечернего перевода фондам — без шлюза поставщика
+    public boolean isDonation() {
+        return type == PaymentType.BILL && "DONATIONS".equals(providerGroup);
+    }
 
     public void setBill(String providerCode, String providerGroup, String billFieldsJson) {
         this.providerCode = providerCode;

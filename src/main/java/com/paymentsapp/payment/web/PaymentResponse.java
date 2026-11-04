@@ -20,7 +20,10 @@ public record PaymentResponse(
         String receiveCurrency,
         BigDecimal receiveAmount,
         FailureCode failureCode,
-        String message
+        String message,
+        // «Округление на пользу»: сколько добавили к покупке и в какой фонд
+        BigDecimal roundUpAmount,
+        String roundUpFundName
 ) {
 
     static PaymentResponse of(Payment p) {
@@ -32,7 +35,7 @@ public record PaymentResponse(
         };
         return new PaymentResponse(p.getId(), p.getType(), p.getStatus(), p.getAmount(), p.getCommissionAmount(),
                 p.getTotal(), p.getRecipientName(), p.getRecipientBankId(), p.getReceiveCurrency(), p.getReceiveAmount(),
-                p.getFailureCode(), message);
+                p.getFailureCode(), message, p.getRoundUpAmount(), p.getRoundUpFundName());
     }
 
     // 200 — платёж завершён (успешно или нет), 202 — ещё в процессе

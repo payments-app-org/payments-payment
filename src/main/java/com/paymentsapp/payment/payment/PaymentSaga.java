@@ -63,6 +63,7 @@ public class PaymentSaga {
             store.move(id, CONFIRMING, "Перевод между своими счетами — без антифрода и процессинга");
             return confirm(id);
         }
+        boolean donation = payment.isDonation();
 
         // Шаг 4. Антифрод
         FraudDecision decision;
@@ -77,6 +78,12 @@ public class PaymentSaga {
                     ? decision.reason() : "Платёж отклонён проверкой безопасности");
         }
         store.move(id, FRAUD_APPROVED, "Антифрод одобрил");
+
+        // Пожертвование: деньги списываем сразу, фонду их одним переводом за день отправит biller
+        if (donation) {
+            store.move(id, CONFIRMING, "Пожертвование — фонду перечислим вместе с остальными в конце дня");
+            return confirm(id);
+        }
 
         // Шаг 5. Процессинг, а для оплаты поставщику (BILL) — поставщик через biller.
         // Статус ставим до вызова: с этого момента деньги могли уйти

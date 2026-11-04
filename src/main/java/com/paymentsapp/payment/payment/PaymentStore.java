@@ -92,6 +92,15 @@ public class PaymentStore {
         data.put("sourceExternal", p.isSourceExternal());
         data.put("purpose", p.getPurpose());
         data.put("billReference", p.getBillReference());
+        // Пожертвование, которое фонду переведёт biller в конце дня (а не шлюз поставщика сразу)
+        if (p.isDonation()) {
+            data.put("charitySettlement", true);
+        }
+        if (p.getRoundUpAmount().signum() > 0) {
+            data.put("roundUpAmount", p.getRoundUpAmount());
+            data.put("roundUpFundCode", p.getRoundUpFundCode());
+            data.put("roundUpFundName", p.getRoundUpFundName());
+        }
         if (p.getType() == PaymentType.BILL) {
             data.put("providerCode", p.getProviderCode());
             data.put("providerGroup", p.getProviderGroup());

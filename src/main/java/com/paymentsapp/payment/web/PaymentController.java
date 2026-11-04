@@ -142,8 +142,10 @@ public class PaymentController {
         String senderName;
         boolean sourceExternal;
         boolean destinationExternal = false;
+        AccountClient.Roundup roundup;
         try {
             AccountClient.UserInfo user = account.user(userId);
+            roundup = user.roundup();
             sourceExternal = user.isExternal(req.sourceAccountId());
             if (req.type() == PaymentType.OWN_TRANSFER) {
                 // Стороны — свои счета: в истории будет «С Зарплатная ·· 3752» / «На Мой кошелёк»
@@ -238,6 +240,11 @@ public class PaymentController {
         }
         if (bill != null) {
             payment.setBill(bill.providerCode(), bill.providerGroup(), json.writeValueAsString(bill.fields()));
+        }
+        // «Округление на пользу»: покупка 85 ₽ при шаге 10 → спишем 90 ₽, 5 ₽ уйдут в фонд
+        java.math.BigDecimal roundUp = RoundUp.of(req.type(), bill == null ? null : bill.providerGroup(), req.amount(), roundup);
+        if (roundUp.signum() > 0) {
+            payment.setRoundUp(roundUp, roundup.fundCode(), roundup.fundName());
         }
         try {
             return store.create(payment, key);
