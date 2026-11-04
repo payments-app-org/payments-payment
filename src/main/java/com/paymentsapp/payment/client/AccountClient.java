@@ -39,6 +39,8 @@ public class AccountClient {
         // К комиссии в резерве добавляем округление на пользу: списать нужно всё вместе
         body.put("commission", p.getCommissionAmount().add(p.getRoundUpAmount()));
         body.put("currency", p.getCurrency());
+        // Группа поставщика: account проверяет, доступна ли оплата на уровне идентификации клиента
+        body.put("providerGroup", p.getProviderGroup());
         rest.post().uri("/api/internal/reservations")
                 .body(body)
                 .retrieve()
