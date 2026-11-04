@@ -84,8 +84,10 @@ public class PaymentController {
         try {
             // Шаг 2.2–2.4. Котировка, реквизиты, создание платежа — до внешних вызовов, чтобы остался след
             // Тариф зависел от получателя: карта (перевод по карте) или свой счёт зачисления
+            // Оплата поставщику: тариф зависел от поставщика (его группы)
             String recipientKey = req.type() == PaymentType.OWN_TRANSFER && req.destinationAccountId() != null
-                    ? req.destinationAccountId().toString() : req.recipientCardNumber();
+                    ? req.destinationAccountId().toString()
+                    : req.type() == PaymentType.BILL ? req.providerCode() : req.recipientCardNumber();
             Quote quote = quotes.verify(req.quoteToken(), userId, req.sourceAccountId(), req.type().name(), req.amount(),
                     recipientKey);
             Requisites.validate(req);
@@ -196,43 +198,21 @@ public class PaymentController {
         // Юрлицу и в бюджет: проверенные реквизиты, имя получателя и назначение платежа
         RuRequisites.Checked requisites = null;
         String billReference = null;
+        BillerClient.BillCheck bill = null;
         if (req.type() == PaymentType.REQUISITES || req.type() == PaymentType.REQUISITES_OUR) {
             requisites = RuRequisites.check(req.recipientFields(), req.type() == PaymentType.REQUISITES_OUR, json);
-        } else if (req.type() == PaymentType.MOBILE_PAYMENT) {
-            requisites = checkMobile(req);
-        } else if (req.type() == PaymentType.UIN_PAYMENT && req.chargeId() == null) {
-            // Госпошлина по УИН из квитанции (Росреестр): начисление не ищем, получатель — из карточки поставщика
-            requisites = GovFee.check(req, govProvider(req.providerCode()), json);
-            billReference = req.recipientFields().get("uin").replaceAll("\\D", "");
-            if (payments.existsByBillReferenceAndStatusNot(billReference, com.paymentsapp.payment.payment.PaymentStatus.FAILED)) {
-                throw new PaymentException(BILL_NOT_PAYABLE, "По этому УИН уже есть оплата");
-            }
-        } else if (req.type() == PaymentType.UIN_PAYMENT) {
-            BillerClient.GovCharge charge;
+        } else if (req.type() == PaymentType.BILL) {
+            // Всё про поставщика проверяет biller: поля, сумму, номинал, оператора по номеру, начисление
             try {
-                charge = biller.govCharge(req.chargeId())
-                        .orElseThrow(() -> new PaymentException(BILL_NOT_PAYABLE, "Начисление не найдено"));
+                bill = biller.checkBill(req.providerCode(), req.recipientFields(), req.amount(), req.chargeId());
             } catch (RestClientException e) {
-                throw new PaymentException(SERVICE_UNAVAILABLE, "Справочник начислений недоступен, попробуйте позже");
+                throw new PaymentException(SERVICE_UNAVAILABLE, "Справочник поставщиков недоступен, попробуйте позже");
             }
-            if (!"UNPAID".equals(charge.status())) {
-                throw new PaymentException(BILL_NOT_PAYABLE, "Начисление уже оплачено");
-            }
-            if (charge.payableAmount().compareTo(req.amount()) != 0) {
-                throw new PaymentException(BILL_NOT_PAYABLE, "Сумма не совпадает с начислением: " + charge.payableAmount() + " ₽");
-            }
-            var details = new java.util.LinkedHashMap<String, String>();
-            details.put("uin", charge.uin());
-            details.put("name", charge.payeeName());
-            details.put("inn", charge.payeeInn());
-            details.put("kpp", charge.payeeKpp());
-            details.put("account", charge.payeeAccount());
-            details.put("bik", charge.payeeBik());
-            details.put("kbk", charge.kbk());
-            details.put("oktmo", charge.oktmo());
-            requisites = new RuRequisites.Checked(json.writeValueAsString(details), charge.payeeName(), charge.purpose());
-            billReference = charge.uin() + "/" + charge.id();
-            if (payments.existsByBillReferenceAndStatusNot(billReference, com.paymentsapp.payment.payment.PaymentStatus.FAILED)) {
+            requisites = new RuRequisites.Checked(bill.requisites() == null ? null : json.writeValueAsString(bill.requisites()),
+                    bill.recipientName(), bill.purpose());
+            billReference = bill.billReference();
+            if (billReference != null && payments.existsByBillReferenceAndStatusNot(billReference,
+                    com.paymentsapp.payment.payment.PaymentStatus.FAILED)) {
                 throw new PaymentException(BILL_NOT_PAYABLE, "Это начисление уже оплачено или оплачивается");
             }
         }
@@ -245,7 +225,8 @@ public class PaymentController {
                         : Payment.Parties.external(senderName))
                 .withExternal(sourceExternal, destinationExternal);
 
-        Payment payment = new Payment(userId, req.type(), req.sourceAccountId(), parties, req.recipientPhone(), bankId,
+        String recipientPhone = bill != null ? bill.recipientPhone() : req.recipientPhone();
+        Payment payment = new Payment(userId, req.type(), req.sourceAccountId(), parties, recipientPhone, bankId,
                 req.recipientCardNumber() == null ? null : Requisites.maskCard(req.recipientCardNumber()),
                 req.amount(), quote.commission(), quote.tariffId(), req.currencyOrDefault(), quote.quoteId(),
                 req.message() == null || req.message().isBlank() ? null : req.message().trim());
@@ -255,6 +236,9 @@ public class PaymentController {
         if (payee != null) {
             payment.setRequisites(payee.json(), payee.purpose(), billReference);
         }
+        if (bill != null) {
+            payment.setBill(bill.providerCode(), bill.providerGroup(), json.writeValueAsString(bill.fields()));
+        }
         try {
             return store.create(payment, key);
         } catch (DataIntegrityViolationException e) {
@@ -263,39 +247,6 @@ public class PaymentController {
             }
             // Уникальный индекс по quote_id: по этой котировке уже платили
             throw new PaymentException(QUOTE_ALREADY_USED, "Эта котировка уже использована, пересчитайте комиссию");
-        }
-    }
-
-    // Мобильная связь: оператора по номеру определяет biller — он должен совпасть с выбранным в форме
-    private RuRequisites.Checked checkMobile(PaymentRequest req) {
-        BillerClient.Provider operator;
-        BillerClient.Provider chosen;
-        try {
-            operator = biller.mobileOperator(req.recipientPhone())
-                    .orElseThrow(() -> new PaymentException(RECIPIENT_NOT_FOUND, "Не удалось определить оператора по номеру"));
-            chosen = biller.provider(req.providerCode()).map(BillerClient.ProviderDetails::provider)
-                    .filter(p -> "MOBILE".equals(p.groupCode()))
-                    .orElseThrow(() -> new PaymentException(INVALID_REQUISITES, "Оператор связи не найден"));
-        } catch (RestClientException e) {
-            throw new PaymentException(SERVICE_UNAVAILABLE, "Справочник операторов недоступен, попробуйте позже");
-        }
-        if (operator.id() != chosen.id()) {
-            throw new PaymentException(RECIPIENT_NOT_FOUND, "Номер обслуживается оператором " + operator.name());
-        }
-        var details = new java.util.LinkedHashMap<String, String>();
-        details.put("provider", operator.code());
-        details.put("operator", operator.legalName());
-        details.put("phone", req.recipientPhone());
-        return new RuRequisites.Checked(json.writeValueAsString(details), operator.name(),
-                "Пополнение счёта " + GovFee.formatPhone(req.recipientPhone()));
-    }
-
-    private BillerClient.ProviderDetails govProvider(String code) {
-        try {
-            return biller.provider(code).filter(p -> p.gov() != null)
-                    .orElseThrow(() -> new PaymentException(INVALID_REQUISITES, "Получатель платежа не найден"));
-        } catch (RestClientException e) {
-            throw new PaymentException(SERVICE_UNAVAILABLE, "Справочник поставщиков недоступен, попробуйте позже");
         }
     }
 

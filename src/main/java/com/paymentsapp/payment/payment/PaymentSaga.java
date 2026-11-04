@@ -4,6 +4,7 @@ import static com.paymentsapp.payment.payment.PaymentStatus.*;
 
 import com.paymentsapp.payment.client.AccountClient;
 import com.paymentsapp.payment.client.AccountRejectedException;
+import com.paymentsapp.payment.client.BillerClient;
 import com.paymentsapp.payment.client.FraudClient;
 import com.paymentsapp.payment.client.FraudClient.FraudDecision;
 import com.paymentsapp.payment.client.ProcessingClient;
@@ -27,12 +28,17 @@ public class PaymentSaga {
     private final AccountClient account;
     private final FraudClient fraud;
     private final ProcessingClient processing;
+    private final BillerClient biller;
+    private final tools.jackson.databind.json.JsonMapper json;
 
-    public PaymentSaga(PaymentStore store, AccountClient account, FraudClient fraud, ProcessingClient processing) {
+    public PaymentSaga(PaymentStore store, AccountClient account, FraudClient fraud, ProcessingClient processing,
+                       BillerClient biller, tools.jackson.databind.json.JsonMapper json) {
         this.store = store;
         this.account = account;
         this.fraud = fraud;
         this.processing = processing;
+        this.biller = biller;
+        this.json = json;
     }
 
     public Payment run(Payment payment, String recipientCardNumber) {
@@ -72,14 +78,18 @@ public class PaymentSaga {
         }
         store.move(id, FRAUD_APPROVED, "Антифрод одобрил");
 
-        // Шаг 5. Процессинг. Статус ставим до вызова: с этого момента деньги могли уйти
-        payment = store.move(id, SENT_TO_PROCESSING, "Отправлен в процессинг");
+        // Шаг 5. Процессинг, а для оплаты поставщику (BILL) — поставщик через biller.
+        // Статус ставим до вызова: с этого момента деньги могли уйти
+        boolean bill = payment.getType() == PaymentType.BILL;
+        payment = store.move(id, SENT_TO_PROCESSING, bill ? "Отправлен поставщику через biller" : "Отправлен в процессинг");
         TransferResult result;
         try {
-            result = processing.transfer(payment, recipientCardNumber);
+            result = bill
+                    ? biller.pay(id, payment.getProviderCode(), payment.getAmount(), billValues(payment))
+                    : processing.transfer(payment, recipientCardNumber);
         } catch (RestClientException e) {
-            log.warn("payment {}: процессинг не ответил, спрашиваем статус: {}", id, e.getMessage());
-            Optional<TransferResult> known = findProcessingResult(id);
+            log.warn("payment {}: {} не ответил, спрашиваем статус: {}", id, bill ? "biller" : "процессинг", e.getMessage());
+            Optional<TransferResult> known = findProcessingResult(payment);
             if (known.isEmpty()) {
                 // Исход неизвестен — решит RecoveryJob
                 return store.get(id);
@@ -93,7 +103,7 @@ public class PaymentSaga {
     Payment afterProcessing(UUID id, TransferResult result) {
         if (!result.completed()) {
             return compensate(id, FailureCode.PROCESSING_DECLINED, result.reason() != null
-                    ? result.reason() : "Перевод отклонён банком получателя");
+                    ? result.reason() : "Платёж отклонён получателем");
         }
         store.moveWithProcessingId(id, CONFIRMING, result.externalId());
         return confirm(id);
@@ -126,9 +136,17 @@ public class PaymentSaga {
         return store.move(id, FAILED, "Резерв снят");
     }
 
-    Optional<TransferResult> findProcessingResult(UUID id) {
+    // Значения полей для поставщика: [{key, value, …}] → {key: value}
+    private java.util.Map<String, String> billValues(Payment p) {
+        java.util.Map<String, String> values = new java.util.LinkedHashMap<>();
+        json.readTree(p.getBillFields()).forEach(f -> values.put(f.path("key").asString(), f.path("value").asString()));
+        return values;
+    }
+
+    Optional<TransferResult> findProcessingResult(Payment p) {
+        UUID id = p.getId();
         try {
-            return processing.findResult(id);
+            return p.getType() == PaymentType.BILL ? biller.findPayment(id) : processing.findResult(id);
         } catch (RestClientException e) {
             log.warn("payment {}: не удалось узнать статус в процессинге: {}", id, e.getMessage());
             return Optional.empty();

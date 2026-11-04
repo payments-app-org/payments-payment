@@ -33,8 +33,8 @@ public class RecoveryJob {
         each(EnumSet.of(CONFIRMING), Duration.ofSeconds(10), p -> saga.confirm(p.getId()));
         each(EnumSet.of(COMPENSATING), Duration.ofSeconds(10), p -> saga.release(p.getId()));
 
-        // Процессинг так и не ответил — спрашиваем статус. Не получал перевод — отменяем.
-        each(EnumSet.of(SENT_TO_PROCESSING), Duration.ofSeconds(30), p -> saga.findProcessingResult(p.getId())
+        // Процессинг (или поставщик через biller) так и не ответил — спрашиваем статус. Не получал — отменяем.
+        each(EnumSet.of(SENT_TO_PROCESSING), Duration.ofSeconds(30), p -> saga.findProcessingResult(p)
                 .ifPresentOrElse(
                         result -> saga.afterProcessing(p.getId(), result),
                         () -> saga.compensate(p.getId(), FailureCode.PROCESSING_NOT_COMPLETED,

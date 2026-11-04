@@ -58,6 +58,11 @@ public class Payment {
     private String recipientDetails;
     private String purpose;
     private String billReference;
+    // Оплата поставщику (BILL): кто поставщик, его группа и что ввёл плательщик — [{key, label, value, display}]
+    private String providerCode;
+    private String providerGroup;
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
+    private String billFields;
 
     @Enumerated(EnumType.STRING)
     private FailureCode failureCode;
@@ -210,5 +215,14 @@ public class Payment {
     public String getRecipientDetails() { return recipientDetails; }
     public String getPurpose() { return purpose; }
     public String getBillReference() { return billReference; }
+    public String getProviderCode() { return providerCode; }
+    public String getProviderGroup() { return providerGroup; }
+    public String getBillFields() { return billFields; }
+
+    public void setBill(String providerCode, String providerGroup, String billFieldsJson) {
+        this.providerCode = providerCode;
+        this.providerGroup = providerGroup;
+        this.billFields = billFieldsJson;
+    }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
 }

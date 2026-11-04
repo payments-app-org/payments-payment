@@ -54,7 +54,7 @@ public class PaymentStore {
         Payment p = get(id);
         p.moveTo(to);
         p.setProcessingId(processingId);
-        return saved(p, "Процессинг провёл перевод: " + processingId);
+        return saved(p, (p.getType() == PaymentType.BILL ? "Поставщик принял платёж: " : "Процессинг провёл перевод: ") + processingId);
     }
 
     @Transactional
@@ -92,6 +92,11 @@ public class PaymentStore {
         data.put("sourceExternal", p.isSourceExternal());
         data.put("purpose", p.getPurpose());
         data.put("billReference", p.getBillReference());
+        if (p.getType() == PaymentType.BILL) {
+            data.put("providerCode", p.getProviderCode());
+            data.put("providerGroup", p.getProviderGroup());
+            data.put("billFields", p.getBillFields());
+        }
         if (p.getType() == PaymentType.ABROAD) {
             data.put("country", p.getCountry());
             data.put("receiveCurrency", p.getReceiveCurrency());

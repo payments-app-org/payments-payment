@@ -29,7 +29,8 @@ class PaymentSagaTest {
     private final AccountClient account = mock(AccountClient.class);
     private final FraudClient fraud = mock(FraudClient.class);
     private final ProcessingClient processing = mock(ProcessingClient.class);
-    private final PaymentSaga saga = new PaymentSaga(store, account, fraud, processing);
+    private final PaymentSaga saga = new PaymentSaga(store, account, fraud, processing,
+            mock(com.paymentsapp.payment.client.BillerClient.class), tools.jackson.databind.json.JsonMapper.builder().build());
 
     private final Payment payment = new Payment(UUID.randomUUID(), PaymentType.SBP_PHONE, UUID.randomUUID(),
             "+79161234567", "100000000004", null, new BigDecimal("100"), new BigDecimal("1"), 1, "RUB",

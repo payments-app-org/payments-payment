@@ -46,13 +46,8 @@ final class Requisites {
                     "Телефон получателя в формате +7XXXXXXXXXX");
             case REQUISITES, REQUISITES_OUR -> require(req.recipientFields() != null && !req.recipientFields().isEmpty(),
                     "Заполните реквизиты получателя");
-            case UIN_PAYMENT -> require(req.chargeId() != null
-                    || req.providerCode() != null && req.recipientFields() != null, "Не выбрано начисление");
-            case MOBILE_PAYMENT -> {
-                require(req.recipientPhone() != null && PHONE.matcher(req.recipientPhone()).matches(),
-                        "Телефон в формате +7XXXXXXXXXX");
-                require(req.providerCode() != null, "Не определён оператор связи");
-            }
+            // Поля поставщика проверяет biller
+            case BILL -> require(req.providerCode() != null && !req.providerCode().isBlank(), "Не выбран поставщик");
             case OWN_TRANSFER -> {
                 require(req.destinationAccountId() != null, "Не выбран счёт зачисления");
                 require(!req.destinationAccountId().equals(req.sourceAccountId()), "Нельзя перевести на тот же счёт");

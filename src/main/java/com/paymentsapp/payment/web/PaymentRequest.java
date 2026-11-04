@@ -11,7 +11,7 @@ import java.util.UUID;
 
 // SBP_PHONE: recipientPhone + recipientBankId (необязателен: без него — банк по умолчанию получателя).
 // CARD2CARD: recipientCardNumber. OWN_TRANSFER: destinationAccountId — свой счёт зачисления.
-// MOBILE_PAYMENT: recipientPhone + providerCode. UIN_PAYMENT: chargeId или providerCode + recipientFields (uin, payer*).
+// BILL: providerCode + recipientFields — поля формы поставщика из biller; для найденного начисления госуслуг — chargeId.
 // ABROAD: country, receiveCurrency, receiveAmount, transferMethodId и recipientFields — поля из шаблона способа в biller.
 public record PaymentRequest(
         @NotNull PaymentType type,
