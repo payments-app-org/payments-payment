@@ -198,6 +198,15 @@ public class PaymentController {
         String billReference = null;
         if (req.type() == PaymentType.REQUISITES || req.type() == PaymentType.REQUISITES_OUR) {
             requisites = RuRequisites.check(req.recipientFields(), req.type() == PaymentType.REQUISITES_OUR, json);
+        } else if (req.type() == PaymentType.MOBILE_PAYMENT) {
+            requisites = checkMobile(req);
+        } else if (req.type() == PaymentType.UIN_PAYMENT && req.chargeId() == null) {
+            // Госпошлина по УИН из квитанции (Росреестр): начисление не ищем, получатель — из карточки поставщика
+            requisites = GovFee.check(req, govProvider(req.providerCode()), json);
+            billReference = req.recipientFields().get("uin").replaceAll("\\D", "");
+            if (payments.existsByBillReferenceAndStatusNot(billReference, com.paymentsapp.payment.payment.PaymentStatus.FAILED)) {
+                throw new PaymentException(BILL_NOT_PAYABLE, "По этому УИН уже есть оплата");
+            }
         } else if (req.type() == PaymentType.UIN_PAYMENT) {
             BillerClient.GovCharge charge;
             try {
@@ -254,6 +263,39 @@ public class PaymentController {
             }
             // Уникальный индекс по quote_id: по этой котировке уже платили
             throw new PaymentException(QUOTE_ALREADY_USED, "Эта котировка уже использована, пересчитайте комиссию");
+        }
+    }
+
+    // Мобильная связь: оператора по номеру определяет biller — он должен совпасть с выбранным в форме
+    private RuRequisites.Checked checkMobile(PaymentRequest req) {
+        BillerClient.Provider operator;
+        BillerClient.Provider chosen;
+        try {
+            operator = biller.mobileOperator(req.recipientPhone())
+                    .orElseThrow(() -> new PaymentException(RECIPIENT_NOT_FOUND, "Не удалось определить оператора по номеру"));
+            chosen = biller.provider(req.providerCode()).map(BillerClient.ProviderDetails::provider)
+                    .filter(p -> "MOBILE".equals(p.groupCode()))
+                    .orElseThrow(() -> new PaymentException(INVALID_REQUISITES, "Оператор связи не найден"));
+        } catch (RestClientException e) {
+            throw new PaymentException(SERVICE_UNAVAILABLE, "Справочник операторов недоступен, попробуйте позже");
+        }
+        if (operator.id() != chosen.id()) {
+            throw new PaymentException(RECIPIENT_NOT_FOUND, "Номер обслуживается оператором " + operator.name());
+        }
+        var details = new java.util.LinkedHashMap<String, String>();
+        details.put("provider", operator.code());
+        details.put("operator", operator.legalName());
+        details.put("phone", req.recipientPhone());
+        return new RuRequisites.Checked(json.writeValueAsString(details), operator.name(),
+                "Пополнение счёта " + GovFee.formatPhone(req.recipientPhone()));
+    }
+
+    private BillerClient.ProviderDetails govProvider(String code) {
+        try {
+            return biller.provider(code).filter(p -> p.gov() != null)
+                    .orElseThrow(() -> new PaymentException(INVALID_REQUISITES, "Получатель платежа не найден"));
+        } catch (RestClientException e) {
+            throw new PaymentException(SERVICE_UNAVAILABLE, "Справочник поставщиков недоступен, попробуйте позже");
         }
     }
 

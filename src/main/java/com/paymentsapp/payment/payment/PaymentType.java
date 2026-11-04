@@ -1,6 +1,5 @@
 package com.paymentsapp.payment.payment;
 
-// Оплата счетов появится позже
 public enum PaymentType {
     SBP_PHONE,
     CARD2CARD,
@@ -13,6 +12,8 @@ public enum PaymentType {
     // По реквизитам юрлицу: в другой банк / на счёт в нашем банке
     REQUISITES,
     REQUISITES_OUR,
-    // Госуслуги по УИН (начисление из ГИС ГМП через biller)
-    UIN_PAYMENT
+    // Госуслуги по УИН: начисление из ГИС ГМП через biller или УИН и сумма из квитанции (Росреестр)
+    UIN_PAYMENT,
+    // Мобильная связь: оператор по номеру телефона — из biller
+    MOBILE_PAYMENT
 }

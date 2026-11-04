@@ -8,7 +8,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
-// Справочник способов перевода за рубеж: к какой стране относится способ, в каких валютах и какие поля нужны
+// Справочники biller: способы перевода за рубеж, начисления госуслуг, поставщики и операторы связи
 @Component
 public class BillerClient {
 
@@ -35,6 +35,35 @@ public class BillerClient {
         } catch (HttpClientErrorException.NotFound e) {
             return Optional.empty();
         }
+    }
+
+    // Оператор связи по номеру: empty — номер не мобильный или оператор не найден
+    public Optional<Provider> mobileOperator(String phone) {
+        try {
+            return Optional.ofNullable(rest.get().uri("/api/biller/mobile/operator?phone={phone}", phone).retrieve()
+                    .body(Provider.class));
+        } catch (HttpClientErrorException.NotFound | HttpClientErrorException.BadRequest e) {
+            return Optional.empty();
+        }
+    }
+
+    public Optional<ProviderDetails> provider(String code) {
+        try {
+            return Optional.ofNullable(rest.get().uri("/api/biller/providers/{code}", code).retrieve()
+                    .body(ProviderDetails.class));
+        } catch (HttpClientErrorException.NotFound e) {
+            return Optional.empty();
+        }
+    }
+
+    public record Provider(int id, String code, String groupCode, String name, String title, String legalName) {
+    }
+
+    public record ProviderDetails(Provider provider, GovDetails gov) {
+    }
+
+    public record GovDetails(String lookup, String uinPrefix, String payeeName, String payeeInn, String payeeKpp,
+                             String payeeAccount, String payeeBik, String kbk, String oktmo, String purpose) {
     }
 
     public record GovCharge(java.util.UUID id, String uin, String purpose, String payeeName, String payeeInn,

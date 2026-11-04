@@ -11,6 +11,7 @@ import java.util.UUID;
 
 // SBP_PHONE: recipientPhone + recipientBankId (необязателен: без него — банк по умолчанию получателя).
 // CARD2CARD: recipientCardNumber. OWN_TRANSFER: destinationAccountId — свой счёт зачисления.
+// MOBILE_PAYMENT: recipientPhone + providerCode. UIN_PAYMENT: chargeId или providerCode + recipientFields (uin, payer*).
 // ABROAD: country, receiveCurrency, receiveAmount, transferMethodId и recipientFields — поля из шаблона способа в biller.
 public record PaymentRequest(
         @NotNull PaymentType type,
@@ -30,7 +31,9 @@ public record PaymentRequest(
         // Поля получателя: за рубеж — по шаблону способа; юрлицу — account, bik, inn, name, kpp, purpose, payerName, payerInn
         java.util.Map<String, String> recipientFields,
         // Госуслуги: id начисления из biller
-        UUID chargeId
+        UUID chargeId,
+        // Поставщик из biller: оператор связи (yota) или госпоставщик без поиска начислений (rosreestr)
+        String providerCode
 ) {
 
     public String currencyOrDefault() {
