@@ -12,8 +12,8 @@ import static org.mockito.Mockito.when;
 
 import com.paymentsapp.payment.client.AccountClient;
 import com.paymentsapp.payment.client.AccountRejectedException;
-import com.paymentsapp.payment.client.FraudClient;
 import com.paymentsapp.payment.client.BillerClient;
+import com.paymentsapp.payment.client.FraudClient;
 import com.paymentsapp.payment.client.FraudClient.FraudDecision;
 import com.paymentsapp.payment.client.FraudClient.Verdict;
 import com.paymentsapp.payment.client.ProcessingClient;
