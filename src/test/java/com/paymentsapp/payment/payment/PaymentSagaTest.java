@@ -75,7 +75,7 @@ class PaymentSagaTest {
     @Test
     void ownTransferSkipsFraudAndProcessing() {
         Payment own = new Payment(UUID.randomUUID(), PaymentType.OWN_TRANSFER, UUID.randomUUID(),
-                new Payment.Parties("С Зарплатная ·· 3752", UUID.randomUUID(), UUID.randomUUID(), "На Мой кошелёк"),
+                new Payment.Parties("Зарплатная ·· 3752", UUID.randomUUID(), UUID.randomUUID(), "Мой кошелёк"),
                 null, null, null, new BigDecimal("1000"), new BigDecimal("10"), 1, "RUB", UUID.randomUUID(), null, NOW);
         UUID ownId = own.getId();
         when(store.move(eq(ownId), any(), anyString())).thenReturn(own);
@@ -95,7 +95,7 @@ class PaymentSagaTest {
     @Test
     void ownTransferFromLinkedCardGoesThroughFraudAndProcessing() {
         Payment own = new Payment(UUID.randomUUID(), PaymentType.OWN_TRANSFER, UUID.randomUUID(),
-                new Payment.Parties("С Карта другого банка ·· 1111", UUID.randomUUID(), UUID.randomUUID(), "На Мой кошелёк", true),
+                new Payment.Parties("Карта другого банка ·· 1111", UUID.randomUUID(), UUID.randomUUID(), "Мой кошелёк", true),
                 null, null, null, new BigDecimal("1000"), new BigDecimal("30"), 1, "RUB", UUID.randomUUID(), null, NOW);
         UUID ownId = own.getId();
         when(store.move(eq(ownId), any(), anyString())).thenReturn(own);

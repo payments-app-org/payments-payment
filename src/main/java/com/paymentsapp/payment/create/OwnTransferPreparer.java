@@ -13,12 +13,6 @@ import org.springframework.stereotype.Component;
 @Component
 class OwnTransferPreparer implements PaymentPreparer {
 
-    // Как стороны видны в истории: «С Зарплатная ·· 3752» / «На Мой кошелёк»
-    private static final String FROM = "С %s";
-    private static final String TO = "На %s";
-    private static final String OWN_ACCOUNT = "своего счёта";
-    private static final String OWN_DESTINATION = "свой счёт";
-
     @Override
     public Set<PaymentType> types() {
         return Set.of(PaymentType.OWN_TRANSFER);
@@ -41,10 +35,11 @@ class OwnTransferPreparer implements PaymentPreparer {
     public Prepared prepare(PreparationContext ctx) {
         PaymentRequest req = ctx.request();
         AccountClient.UserInfo user = ctx.user();
+        // Стороны — названия своих счетов («Зарплатная ·· 3752», «Мой кошелёк»); «С …» / «На …» собирает history
         AccountClient.Recipient self = new AccountClient.Recipient(ctx.userId(),
-                TO.formatted(user.title(req.destinationAccountId(), OWN_DESTINATION)), req.destinationAccountId(), null, null);
+                user.title(req.destinationAccountId(), null), req.destinationAccountId(), null, null);
         return Prepared.builder(ctx)
-                .senderName(FROM.formatted(user.title(req.sourceAccountId(), OWN_ACCOUNT)))
+                .senderName(user.title(req.sourceAccountId(), null))
                 .recipient(Optional.of(self))
                 .destinationExternal(user.isExternal(req.destinationAccountId()))
                 .cardForProcessing(null)
