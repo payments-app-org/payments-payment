@@ -1,72 +1,62 @@
 package com.paymentsapp.payment.client;
 
+import com.paymentsapp.payment.payment.AbroadDetails;
 import com.paymentsapp.payment.payment.Payment;
-import java.time.Duration;
-import java.util.HashMap;
-import java.util.Map;
+import com.paymentsapp.platform.resilience.ResilientCalls;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.RestClient;
 
+// Процессинг. Перевод повторяем, только если не удалось соединиться: после тайм-аута исход неизвестен —
+// его узнаём запросом статуса (findResult), а не повторной отправкой.
 @Component
 public class ProcessingClient {
 
-    private final RestClient rest;
+    private final ProcessingApi api;
+    private final ResilientCalls calls;
 
-    public ProcessingClient(RestClient.Builder builder,
-                            @Value("${clients.processing.url}") String url,
-                            @Value("${clients.processing.timeout}") Duration timeout) {
-        this.rest = RestClients.create(builder, url, timeout);
+    ProcessingClient(ProcessingApi api, ResilientCalls calls) {
+        this.api = api;
+        this.calls = calls;
     }
 
-    // Номер карты получателя передаём только здесь, в базе payment его нет
     public TransferResult transfer(Payment p, String recipientCardNumber) {
-        Map<String, Object> body = new HashMap<>();
-        body.put("paymentId", p.getId());
-        body.put("type", p.getType().name());
-        body.put("amount", p.getAmount());
-        body.put("recipientPhone", p.getRecipientPhone());
-        body.put("recipientBankId", p.getRecipientBankId());
-        body.put("recipientCardNumber", recipientCardNumber);
-        if (p.getType() == com.paymentsapp.payment.payment.PaymentType.ABROAD) {
-            body.put("country", p.getCountry());
-            body.put("receiveCurrency", p.getReceiveCurrency());
-            body.put("receiveAmount", p.getReceiveAmount());
-            body.put("transferMethod", p.getTransferMethodName());
-        }
-        return rest.post().uri("/api/processing/transfers").body(body).retrieve().body(TransferResult.class);
+        AbroadDetails abroad = p.getAbroad();
+        ProcessingApi.TransferRequest request = new ProcessingApi.TransferRequest(p.getId(), p.getType().name(), p.getAmount(),
+                p.getRecipientPhone(), p.getRecipientBankId(), recipientCardNumber,
+                abroad == null ? null : abroad.country(), abroad == null ? null : abroad.receiveCurrency(),
+                abroad == null ? null : abroad.receiveAmount(), abroad == null ? null : abroad.transferMethodName());
+        return calls.call(Backends.PROCESSING, Backends.PROCESSING_CONNECT_ONLY, () -> api.transfer(request));
     }
 
-    // Узнать, чем закончился перевод, если ответ на transfer не дошёл. Пусто — процессинг перевод не получал.
+    // Чем закончился перевод, если ответ на transfer не дошёл. Пусто — процессинг перевод не получал.
     public Optional<TransferResult> findResult(UUID paymentId) {
-        try {
-            return Optional.ofNullable(rest.get().uri("/api/processing/transfers/{paymentId}", paymentId)
-                    .retrieve().body(TransferResult.class));
-        } catch (HttpClientErrorException e) {
-            if (e.getStatusCode().value() == HttpStatus.NOT_FOUND.value()) {
+        return calls.call(Backends.PROCESSING, () -> {
+            try {
+                return Optional.ofNullable(api.result(paymentId));
+            } catch (HttpClientErrorException.NotFound e) {
                 return Optional.empty();
             }
-            throw e;
-        }
+        });
     }
 
     // Справочник СБП: в каких банках у владельца телефона есть счёт
-    public java.util.List<String> sbpBanks(String phone) {
-        SbpBanks banks = rest.get().uri("/api/processing/sbp/banks?phone={phone}", phone).retrieve().body(SbpBanks.class);
-        return banks == null ? java.util.List.of() : banks.banks();
+    public List<String> sbpBanks(String phone) {
+        ProcessingApi.SbpBanks banks = calls.call(Backends.PROCESSING, () -> api.sbpBanks(phone));
+        return banks == null ? List.of() : banks.banks();
     }
 
-    public record SbpBanks(String phone, java.util.List<String> banks) {
+    public enum TransferStatus {
+        COMPLETED,
+        DECLINED
     }
 
-    public record TransferResult(String status, String externalId, String reason) {
+    public record TransferResult(TransferStatus status, String externalId, String reason) {
 
         public boolean completed() {
-            return "COMPLETED".equals(status);
+            return status == TransferStatus.COMPLETED;
         }
     }
 }

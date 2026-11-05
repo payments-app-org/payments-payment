@@ -13,15 +13,21 @@ import static org.mockito.Mockito.when;
 import com.paymentsapp.payment.client.AccountClient;
 import com.paymentsapp.payment.client.AccountRejectedException;
 import com.paymentsapp.payment.client.FraudClient;
+import com.paymentsapp.payment.client.BillerClient;
 import com.paymentsapp.payment.client.FraudClient.FraudDecision;
+import com.paymentsapp.payment.client.FraudClient.Verdict;
 import com.paymentsapp.payment.client.ProcessingClient;
 import com.paymentsapp.payment.client.ProcessingClient.TransferResult;
+import com.paymentsapp.payment.client.ProcessingClient.TransferStatus;
 import java.math.BigDecimal;
+import java.time.OffsetDateTime;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.client.ResourceAccessException;
+import tools.jackson.databind.json.JsonMapper;
 
 class PaymentSagaTest {
 
@@ -29,26 +35,27 @@ class PaymentSagaTest {
     private final AccountClient account = mock(AccountClient.class);
     private final FraudClient fraud = mock(FraudClient.class);
     private final ProcessingClient processing = mock(ProcessingClient.class);
-    private final PaymentSaga saga = new PaymentSaga(store, account, fraud, processing,
-            mock(com.paymentsapp.payment.client.BillerClient.class), tools.jackson.databind.json.JsonMapper.builder().build());
+    private static final OffsetDateTime NOW = OffsetDateTime.parse("2026-11-05T12:00:00+03:00");
+    private final PaymentSaga saga = new PaymentSaga(store, account, fraud, processing, mock(BillerClient.class),
+            new SettlementPolicy(Set.of("DONATIONS")), JsonMapper.builder().build());
 
     private final Payment payment = new Payment(UUID.randomUUID(), PaymentType.SBP_PHONE, UUID.randomUUID(),
-            "+79161234567", "100000000004", null, new BigDecimal("100"), new BigDecimal("1"), 1, "RUB",
-            UUID.randomUUID());
+            new Payment.Parties(null, null, null, null), "+79161234567", "100000000004", null, new BigDecimal("100"),
+            new BigDecimal("1"), 1, "RUB", UUID.randomUUID(), null, NOW);
     private final UUID id = payment.getId();
 
     @BeforeEach
     void storeReturnsPayment() {
         when(store.move(any(), any(), anyString())).thenReturn(payment);
-        when(store.moveWithProcessingId(any(), any(), any())).thenReturn(payment);
+        when(store.moveWithProcessingId(any(), any(), any(), anyString())).thenReturn(payment);
         when(store.fail(any(), any(), any(), any())).thenReturn(payment);
         when(store.get(id)).thenReturn(payment);
     }
 
     @Test
     void happyPathReservesChecksProcessesAndCaptures() {
-        when(fraud.check(payment)).thenReturn(new FraudDecision("APPROVED", null));
-        when(processing.transfer(payment, null)).thenReturn(new TransferResult("COMPLETED", "PRC-1", null));
+        when(fraud.check(payment)).thenReturn(new FraudDecision(Verdict.APPROVED, null));
+        when(processing.transfer(payment, null)).thenReturn(new TransferResult(TransferStatus.COMPLETED, "PRC-1", null));
 
         saga.run(payment, null);
 
@@ -59,7 +66,7 @@ class PaymentSagaTest {
         order.verify(store).move(eq(id), eq(FRAUD_APPROVED), anyString());
         order.verify(store).move(eq(id), eq(SENT_TO_PROCESSING), anyString());
         order.verify(processing).transfer(payment, null);
-        order.verify(store).moveWithProcessingId(id, CONFIRMING, "PRC-1");
+        order.verify(store).moveWithProcessingId(eq(id), eq(CONFIRMING), eq("PRC-1"), anyString());
         order.verify(account).capture(id);
         order.verify(store).move(eq(id), eq(SUCCESS), anyString());
         verify(account, never()).release(any());
@@ -69,7 +76,7 @@ class PaymentSagaTest {
     void ownTransferSkipsFraudAndProcessing() {
         Payment own = new Payment(UUID.randomUUID(), PaymentType.OWN_TRANSFER, UUID.randomUUID(),
                 new Payment.Parties("С Зарплатная ·· 3752", UUID.randomUUID(), UUID.randomUUID(), "На Мой кошелёк"),
-                null, null, null, new BigDecimal("1000"), new BigDecimal("10"), 1, "RUB", UUID.randomUUID(), null);
+                null, null, null, new BigDecimal("1000"), new BigDecimal("10"), 1, "RUB", UUID.randomUUID(), null, NOW);
         UUID ownId = own.getId();
         when(store.move(eq(ownId), any(), anyString())).thenReturn(own);
 
@@ -89,12 +96,12 @@ class PaymentSagaTest {
     void ownTransferFromLinkedCardGoesThroughFraudAndProcessing() {
         Payment own = new Payment(UUID.randomUUID(), PaymentType.OWN_TRANSFER, UUID.randomUUID(),
                 new Payment.Parties("С Карта другого банка ·· 1111", UUID.randomUUID(), UUID.randomUUID(), "На Мой кошелёк", true),
-                null, null, null, new BigDecimal("1000"), new BigDecimal("30"), 1, "RUB", UUID.randomUUID(), null);
+                null, null, null, new BigDecimal("1000"), new BigDecimal("30"), 1, "RUB", UUID.randomUUID(), null, NOW);
         UUID ownId = own.getId();
         when(store.move(eq(ownId), any(), anyString())).thenReturn(own);
-        when(store.moveWithProcessingId(any(), any(), any())).thenReturn(own);
-        when(fraud.check(own)).thenReturn(new FraudDecision("APPROVED", null));
-        when(processing.transfer(own, null)).thenReturn(new TransferResult("COMPLETED", "PRC-9", null));
+        when(store.moveWithProcessingId(any(), any(), any(), anyString())).thenReturn(own);
+        when(fraud.check(own)).thenReturn(new FraudDecision(Verdict.APPROVED, null));
+        when(processing.transfer(own, null)).thenReturn(new TransferResult(TransferStatus.COMPLETED, "PRC-9", null));
 
         saga.run(own, null);
 
@@ -128,7 +135,7 @@ class PaymentSagaTest {
 
     @Test
     void fraudRejectReleasesReservation() {
-        when(fraud.check(payment)).thenReturn(new FraudDecision("REJECTED", "Получатель в стоп-листе"));
+        when(fraud.check(payment)).thenReturn(new FraudDecision(Verdict.REJECTED, "Получатель в стоп-листе"));
 
         saga.run(payment, null);
 
@@ -150,8 +157,8 @@ class PaymentSagaTest {
 
     @Test
     void processingDeclineReleasesReservation() {
-        when(fraud.check(payment)).thenReturn(new FraudDecision("APPROVED", null));
-        when(processing.transfer(payment, null)).thenReturn(new TransferResult("DECLINED", null, "Получатель не найден"));
+        when(fraud.check(payment)).thenReturn(new FraudDecision(Verdict.APPROVED, null));
+        when(processing.transfer(payment, null)).thenReturn(new TransferResult(TransferStatus.DECLINED, null, "Получатель не найден"));
 
         saga.run(payment, null);
 
@@ -162,9 +169,9 @@ class PaymentSagaTest {
 
     @Test
     void processingTimeoutAsksForStatusAndCapturesIfCompleted() {
-        when(fraud.check(payment)).thenReturn(new FraudDecision("APPROVED", null));
+        when(fraud.check(payment)).thenReturn(new FraudDecision(Verdict.APPROVED, null));
         when(processing.transfer(payment, null)).thenThrow(new ResourceAccessException("Read timed out"));
-        when(processing.findResult(id)).thenReturn(Optional.of(new TransferResult("COMPLETED", "PRC-2", null)));
+        when(processing.findResult(id)).thenReturn(Optional.of(new TransferResult(TransferStatus.COMPLETED, "PRC-2", null)));
 
         saga.run(payment, null);
 
@@ -174,7 +181,7 @@ class PaymentSagaTest {
 
     @Test
     void processingTimeoutWithUnknownOutcomeLeavesPaymentForRecovery() {
-        when(fraud.check(payment)).thenReturn(new FraudDecision("APPROVED", null));
+        when(fraud.check(payment)).thenReturn(new FraudDecision(Verdict.APPROVED, null));
         when(processing.transfer(payment, null)).thenThrow(new ResourceAccessException("Read timed out"));
         when(processing.findResult(id)).thenReturn(Optional.empty());
 
@@ -187,8 +194,8 @@ class PaymentSagaTest {
 
     @Test
     void captureFailureLeavesPaymentConfirmingForRetry() {
-        when(fraud.check(payment)).thenReturn(new FraudDecision("APPROVED", null));
-        when(processing.transfer(payment, null)).thenReturn(new TransferResult("COMPLETED", "PRC-3", null));
+        when(fraud.check(payment)).thenReturn(new FraudDecision(Verdict.APPROVED, null));
+        when(processing.transfer(payment, null)).thenReturn(new TransferResult(TransferStatus.COMPLETED, "PRC-3", null));
         org.mockito.Mockito.doThrow(new ResourceAccessException("down")).when(account).capture(id);
 
         saga.run(payment, null);

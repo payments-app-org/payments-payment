@@ -24,10 +24,12 @@ public class StatusChange {
     protected StatusChange() {
     }
 
-    StatusChange(UUID paymentId, PaymentStatus status, String note) {
+    private static final int NOTE_MAX = 255;
+
+    StatusChange(UUID paymentId, PaymentStatus status, String note, OffsetDateTime now) {
         this.paymentId = paymentId;
         this.status = status.name();
-        this.note = note == null || note.length() <= 255 ? note : note.substring(0, 255);
-        this.createdAt = OffsetDateTime.now();
+        this.note = note == null || note.length() <= NOTE_MAX ? note : note.substring(0, NOTE_MAX);
+        this.createdAt = now;
     }
 }

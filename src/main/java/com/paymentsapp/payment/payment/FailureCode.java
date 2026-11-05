@@ -3,6 +3,7 @@ package com.paymentsapp.payment.payment;
 // Почему платёж не прошёл. Первые коды приходят из account как есть.
 public enum FailureCode {
     INSUFFICIENT_FUNDS,
+    IDENTIFICATION_REQUIRED,
     LIMIT_EXCEEDED,
     ACCOUNT_BLOCKED,
     ACCOUNT_NOT_OWNED,

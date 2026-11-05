@@ -1,38 +1,35 @@
 package com.paymentsapp.payment.client;
 
 import com.paymentsapp.payment.payment.Payment;
-import java.time.Duration;
-import java.util.Map;
-import org.springframework.beans.factory.annotation.Value;
+import com.paymentsapp.platform.resilience.ResilientCalls;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestClient;
 
+// Антифрод: проверка идемпотентна по paymentId — повтор при сбое связи безопасен
 @Component
 public class FraudClient {
 
-    private final RestClient rest;
+    private final FraudApi api;
+    private final ResilientCalls calls;
 
-    public FraudClient(RestClient.Builder builder,
-                       @Value("${clients.fraud.url}") String url,
-                       @Value("${clients.fraud.timeout}") Duration timeout) {
-        this.rest = RestClients.create(builder, url, timeout);
+    FraudClient(FraudApi api, ResilientCalls calls) {
+        this.api = api;
+        this.calls = calls;
     }
 
     public FraudDecision check(Payment p) {
-        return rest.post().uri("/api/fraud/check")
-                .body(Map.of(
-                        "paymentId", p.getId(),
-                        "userId", p.getUserId(),
-                        "type", p.getType().name(),
-                        "amount", p.getAmount()))
-                .retrieve()
-                .body(FraudDecision.class);
+        FraudApi.CheckRequest request = new FraudApi.CheckRequest(p.getId(), p.getUserId(), p.getType().name(), p.getAmount());
+        return calls.call(Backends.FRAUD, () -> api.check(request));
     }
 
-    public record FraudDecision(String decision, String reason) {
+    public enum Verdict {
+        APPROVED,
+        REJECTED
+    }
+
+    public record FraudDecision(Verdict decision, String reason) {
 
         public boolean approved() {
-            return "APPROVED".equals(decision);
+            return decision == Verdict.APPROVED;
         }
     }
 }

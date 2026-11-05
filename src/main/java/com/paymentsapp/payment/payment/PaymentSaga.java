@@ -9,12 +9,15 @@ import com.paymentsapp.payment.client.FraudClient;
 import com.paymentsapp.payment.client.FraudClient.FraudDecision;
 import com.paymentsapp.payment.client.ProcessingClient;
 import com.paymentsapp.payment.client.ProcessingClient.TransferResult;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientException;
+import tools.jackson.databind.json.JsonMapper;
 
 // Оркестратор: ведёт платёж по шагам и при отказе откатывает уже сделанное.
 // Сбой связи на шаге, где нельзя понять исход, оставляет платёж в промежуточном статусе —
@@ -23,16 +26,20 @@ import org.springframework.web.client.RestClientException;
 public class PaymentSaga {
 
     private static final Logger log = LoggerFactory.getLogger(PaymentSaga.class);
+    private static final String FIELD_KEY = "key";
+    private static final String FIELD_VALUE = "value";
 
     private final PaymentStore store;
     private final AccountClient account;
     private final FraudClient fraud;
     private final ProcessingClient processing;
     private final BillerClient biller;
-    private final tools.jackson.databind.json.JsonMapper json;
+    private final SettlementPolicy settlement;
+    private final JsonMapper json;
 
     public PaymentSaga(PaymentStore store, AccountClient account, FraudClient fraud, ProcessingClient processing,
-                       BillerClient biller, tools.jackson.databind.json.JsonMapper json) {
+                       BillerClient biller, SettlementPolicy settlement, JsonMapper json) {
+        this.settlement = settlement;
         this.store = store;
         this.account = account;
         this.fraud = fraud;
@@ -63,7 +70,7 @@ public class PaymentSaga {
             store.move(id, CONFIRMING, "Перевод между своими счетами — без антифрода и процессинга");
             return confirm(id);
         }
-        boolean donation = payment.isDonation();
+        boolean deferred = settlement.isDeferred(payment);
 
         // Шаг 4. Антифрод
         FraudDecision decision;
@@ -80,7 +87,7 @@ public class PaymentSaga {
         store.move(id, FRAUD_APPROVED, "Антифрод одобрил");
 
         // Пожертвование: деньги списываем сразу, фонду их одним переводом за день отправит biller
-        if (donation) {
+        if (deferred) {
             store.move(id, CONFIRMING, "Пожертвование — фонду перечислим вместе с остальными в конце дня");
             return confirm(id);
         }
@@ -92,7 +99,7 @@ public class PaymentSaga {
         TransferResult result;
         try {
             result = bill
-                    ? biller.pay(id, payment.getProviderCode(), payment.getAmount(), billValues(payment))
+                    ? biller.pay(id, payment.getBill().providerCode(), payment.getAmount(), billValues(payment))
                     : processing.transfer(payment, recipientCardNumber);
         } catch (RestClientException e) {
             log.warn("payment {}: {} не ответил, спрашиваем статус: {}", id, bill ? "biller" : "процессинг", e.getMessage());
@@ -103,16 +110,18 @@ public class PaymentSaga {
             }
             result = known.get();
         }
-        return afterProcessing(id, result);
+        return afterProcessing(payment, result);
     }
 
-    // Шаг 6. Процессинг ответил: проводим списание или откатываем
-    Payment afterProcessing(UUID id, TransferResult result) {
+    // Шаг 6. Процессинг (или поставщик) ответил: проводим списание или откатываем
+    Payment afterProcessing(Payment payment, TransferResult result) {
+        UUID id = payment.getId();
         if (!result.completed()) {
             return compensate(id, FailureCode.PROCESSING_DECLINED, result.reason() != null
                     ? result.reason() : "Платёж отклонён получателем");
         }
-        store.moveWithProcessingId(id, CONFIRMING, result.externalId());
+        String accepted = payment.getType() == PaymentType.BILL ? "Поставщик принял платёж: " : "Процессинг провёл перевод: ";
+        store.moveWithProcessingId(id, CONFIRMING, result.externalId(), accepted + result.externalId());
         return confirm(id);
     }
 
@@ -144,9 +153,9 @@ public class PaymentSaga {
     }
 
     // Значения полей для поставщика: [{key, value, …}] → {key: value}
-    private java.util.Map<String, String> billValues(Payment p) {
-        java.util.Map<String, String> values = new java.util.LinkedHashMap<>();
-        json.readTree(p.getBillFields()).forEach(f -> values.put(f.path("key").asString(), f.path("value").asString()));
+    private Map<String, String> billValues(Payment p) {
+        Map<String, String> values = new LinkedHashMap<>();
+        json.readTree(p.getBill().billFields()).forEach(f -> values.put(f.path(FIELD_KEY).asString(), f.path(FIELD_VALUE).asString()));
         return values;
     }
 

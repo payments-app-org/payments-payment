@@ -9,6 +9,24 @@ spring:
     clients:
       connect-timeout: ${HTTP_CONNECT_TIMEOUT:1s}
       read-timeout: ${HTTP_READ_TIMEOUT:5s}
+    # HTTP-клиенты соседей (интерфейсы @HttpExchange): адрес и тайм-ауты по группам
+    serviceclient:
+      account:
+        base-url: ${ACCOUNT_URL:http://localhost:8081}
+        connect-timeout: 1s
+        read-timeout: 3s
+      fraud:
+        base-url: ${FRAUD_URL:http://localhost:8084}
+        connect-timeout: 1s
+        read-timeout: 2s
+      processing:
+        base-url: ${PROCESSING_URL:http://localhost:8085}
+        connect-timeout: 1s
+        read-timeout: 3s
+      biller:
+        base-url: ${BILLER_URL:http://localhost:8087}
+        connect-timeout: 1s
+        read-timeout: 3s
   # Сага ждёт ответы других сервисов — на виртуальных потоках это дёшево
   threads:
     virtual:
@@ -44,27 +62,88 @@ spring:
     properties:
       hibernate.default_schema: payment
 
-clients:
-  account:
-    url: ${ACCOUNT_URL:http://localhost:8081}
-    timeout: 3s
-  fraud:
-    url: ${FRAUD_URL:http://localhost:8084}
-    timeout: 2s
-  processing:
-    url: ${PROCESSING_URL:http://localhost:8085}
-    timeout: 3s
-  biller:
-    url: ${BILLER_URL:http://localhost:8087}
-    timeout: 3s
+# Отказоустойчивость вызовов соседей (libs/platform ResilientCalls). Повторяем только идемпотентные вызовы;
+# 4xx — бизнес-ответ, не сбой: не повторяем и не считаем в circuit breaker.
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 20
+        minimum-number-of-calls: 10
+        failure-rate-threshold: 50
+        slow-call-duration-threshold: 2s
+        slow-call-rate-threshold: 80
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
+        record-exceptions:
+          - org.springframework.web.client.ResourceAccessException
+          - org.springframework.web.client.HttpServerErrorException
+    instances:
+      account: { base-config: default }
+      fraud: { base-config: default }
+      processing: { base-config: default }
+      biller: { base-config: default }
+  retry:
+    configs:
+      default:
+        max-attempts: 3
+        wait-duration: 200ms
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        retry-exceptions:
+          - org.springframework.web.client.ResourceAccessException
+          - org.springframework.web.client.HttpServerErrorException
+      # Неидемпотентные вызовы (перевод, оплата у поставщика): только если не удалось соединиться
+      connect-only:
+        max-attempts: 2
+        wait-duration: 200ms
+        retry-exception-predicate: com.paymentsapp.platform.resilience.ConnectFailure
+    instances:
+      account: { base-config: default }
+      fraud: { base-config: default, max-attempts: 2 }
+      processing: { base-config: default }
+      biller: { base-config: default }
+      processing-connect-only: { base-config: connect-only }
+      biller-connect-only: { base-config: connect-only }
+  bulkhead:
+    configs:
+      default:
+        # Не больше стольких одновременных вызовов соседа: виртуальные потоки иначе завалят упавший сервис
+        max-concurrent-calls: 50
+        max-wait-duration: 100ms
+    instances:
+      account: { base-config: default }
+      fraud: { base-config: default }
+      processing: { base-config: default }
+      biller: { base-config: default }
 
 # Общий с pricing секрет для проверки котировок
 quote:
   # Только из окружения: значения по умолчанию у секрета нет
   secret: ${QUOTE_SECRET}
 
-recovery:
-  interval: 10s
+payment:
+  # Минимальная сумма любого платежа, ₽
+  min-amount: 10
+  requisites:
+    # БИК нашего банка
+    our-bik: "044525999"
+  # «Округление на пользу»: оплата по реквизитам и услуги этих групп поставщиков
+  roundup:
+    types: [REQUISITES, REQUISITES_OUR]
+    bill-groups: [MOBILE, GAMES, UTILITIES, GOV, INTERNET, EDUCATION, SHOPS, TRAVEL, INSURANCE, SECURITY]
+  # Пожертвования: biller переводит фондам сам в конце дня — без шлюза поставщика
+  settlement:
+    deferred-groups: [DONATIONS]
+  # RecoveryJob: интервал, через сколько платёж в статусе считается зависшим, размер пачки
+  recovery:
+    interval: 10s
+    confirm-after: 10s
+    release-after: 10s
+    processing-after: 30s
+    interrupted-after: 60s
+    batch-size: 50
 
 # Общая библиотека libs/platform
 platform:

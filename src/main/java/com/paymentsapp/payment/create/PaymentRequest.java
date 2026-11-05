@@ -1,4 +1,4 @@
-package com.paymentsapp.payment.web;
+package com.paymentsapp.payment.create;
 
 import com.paymentsapp.payment.payment.PaymentType;
 import jakarta.validation.constraints.Digits;
@@ -7,6 +7,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
+import java.util.Map;
 import java.util.UUID;
 
 // SBP_PHONE: recipientPhone + recipientBankId (необязателен: без него — банк по умолчанию получателя).
@@ -29,14 +30,17 @@ public record PaymentRequest(
         BigDecimal receiveAmount,
         Integer transferMethodId,
         // Поля получателя: за рубеж — по шаблону способа; юрлицу — account, bik, inn, name, kpp, purpose, payerName, payerInn
-        java.util.Map<String, String> recipientFields,
+        Map<String, String> recipientFields,
         // Госуслуги: id начисления из biller
         UUID chargeId,
         // Поставщик из biller: оператор связи (yota) или госпоставщик без поиска начислений (rosreestr)
         String providerCode
 ) {
 
+    // Валюта платежа по умолчанию — рубли
+    public static final String DEFAULT_CURRENCY = "RUB";
+
     public String currencyOrDefault() {
-        return currency == null || currency.isBlank() ? "RUB" : currency;
+        return currency == null || currency.isBlank() ? DEFAULT_CURRENCY : currency;
     }
 }

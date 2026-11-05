@@ -1,78 +1,89 @@
 package com.paymentsapp.payment.client;
 
 import com.paymentsapp.payment.payment.Payment;
-import java.time.Duration;
-import java.util.HashMap;
+import com.paymentsapp.platform.error.RemoteProblem;
+import com.paymentsapp.platform.resilience.ResilientCalls;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatusCode;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestClient;
-import tools.jackson.databind.JsonNode;
+import org.springframework.web.client.HttpClientErrorException;
 import tools.jackson.databind.json.JsonMapper;
 
 // Резерв, списание и снятие резерва в account. Все вызовы идемпотентны по paymentId — их можно повторять.
-// Бизнес-отказ → AccountRejectedException, сбой сети или 5xx → RestClientException.
+// Бизнес-отказ (4xx) → AccountRejectedException, сбой сети, 5xx или разомкнутый circuit breaker → RestClientException.
 @Component
 public class AccountClient {
 
-    private final RestClient rest;
+    private static final String DEFAULT_REJECTION = "Отказ сервиса счетов";
+    private static final String LAST4_SEPARATOR = " ·· ";
+
+    private final AccountApi api;
+    private final ResilientCalls calls;
     private final JsonMapper json;
 
-    public AccountClient(RestClient.Builder builder, JsonMapper json,
-                         @Value("${clients.account.url}") String url,
-                         @Value("${clients.account.timeout}") Duration timeout) {
-        this.rest = RestClients.create(builder, url, timeout);
+    AccountClient(AccountApi api, ResilientCalls calls, JsonMapper json) {
+        this.api = api;
+        this.calls = calls;
         this.json = json;
     }
 
     public void reserve(Payment p) {
-        Map<String, Object> body = new HashMap<>();
-        body.put("paymentId", p.getId());
-        body.put("userId", p.getUserId());
-        body.put("accountId", p.getSourceAccountId());
-        body.put("recipientAccountId", p.getRecipientAccountId());
-        body.put("operationType", p.getType().name());
-        body.put("amount", p.getAmount());
-        // К комиссии в резерве добавляем округление на пользу: списать нужно всё вместе
-        body.put("commission", p.getCommissionAmount().add(p.getRoundUpAmount()));
-        body.put("currency", p.getCurrency());
-        // Группа поставщика: account проверяет, доступна ли оплата на уровне идентификации клиента
-        body.put("providerGroup", p.getProviderGroup());
-        rest.post().uri("/api/internal/reservations")
-                .body(body)
-                .retrieve()
-                .onStatus(HttpStatusCode::is4xxClientError, (req, res) -> {
-                    JsonNode problem = json.readTree(res.getBody());
-                    throw new AccountRejectedException(problem.path("code").asString(null),
-                            problem.path("detail").asString("Отказ сервиса account"));
-                })
-                .toBodilessEntity();
+        AccountApi.ReserveRequest request = new AccountApi.ReserveRequest(p.getId(), p.getUserId(), p.getSourceAccountId(),
+                p.getRecipientAccountId(), p.getType().name(), p.getAmount(),
+                p.getCommissionAmount().add(p.getRoundUp().amount()), p.getCurrency(),
+                p.getBill() == null ? null : p.getBill().providerGroup());
+        calls.run(Backends.ACCOUNT, () -> {
+            try {
+                api.reserve(request);
+            } catch (HttpClientErrorException e) {
+                RemoteProblem problem = RemoteProblem.of(e, json, DEFAULT_REJECTION);
+                throw new AccountRejectedException(problem.code(), problem.detail());
+            }
+        });
+    }
+
+    public void capture(UUID paymentId) {
+        calls.run(Backends.ACCOUNT, () -> api.capture(paymentId));
+    }
+
+    // Резерва нет (резервирование так и не дошло до account) — снимать нечего, это тоже успех
+    public void release(UUID paymentId) {
+        calls.run(Backends.ACCOUNT, () -> {
+            try {
+                api.release(paymentId);
+            } catch (HttpClientErrorException.NotFound e) {
+                // резерва нет
+            }
+        });
     }
 
     // Наш ли клиент получатель. Пусто — реквизиты не наши, перевод уйдёт в другой банк.
     public Optional<Recipient> findRecipientByPhone(String phone) {
-        return findRecipient("phone", phone);
+        return calls.call(Backends.ACCOUNT, () -> notFoundAsEmpty(() -> api.recipientByPhone(phone)));
     }
 
     public Optional<Recipient> findRecipientByCard(String cardNumber) {
-        return findRecipient("cardNumber", cardNumber);
+        return calls.call(Backends.ACCOUNT, () -> notFoundAsEmpty(() -> api.recipientByCard(cardNumber)));
     }
 
-    // Профиль: имя отправителя (как его увидит получатель) и его счета с названиями и типами
+    // Профиль: имя отправителя (как его увидит получатель), счета с названиями и типами, «Округление на пользу»
     public UserInfo user(UUID userId) {
-        JsonNode user = rest.get().uri("/api/users/{userId}", userId).retrieve().body(JsonNode.class);
-        Map<UUID, AccountInfo> accounts = new HashMap<>();
-        for (JsonNode a : user.path("accounts")) {
-            String last4 = a.path("cardLast4").asString(null);
-            accounts.put(UUID.fromString(a.path("id").asString()), new AccountInfo(
-                    a.path("title").asString() + (last4 == null ? "" : " ·· " + last4), a.path("type").asString()));
+        AccountApi.UserProfile profile = calls.call(Backends.ACCOUNT, () -> api.user(userId));
+        Map<UUID, AccountInfo> accounts = profile.accounts().stream().collect(Collectors.toMap(AccountApi.AccountView::id,
+                a -> new AccountInfo(a.cardLast4() == null ? a.title() : a.title() + LAST4_SEPARATOR + a.cardLast4(), a.type())));
+        AccountApi.RoundupView r = profile.roundup();
+        return new UserInfo(profile.displayName(), accounts, r == null ? null : new Roundup(r.step(), r.fundCode(), r.fundName()));
+    }
+
+    private static <T> Optional<T> notFoundAsEmpty(Supplier<T> call) {
+        try {
+            return Optional.ofNullable(call.get());
+        } catch (HttpClientErrorException.NotFound e) {
+            return Optional.empty();
         }
-        JsonNode r = user.path("roundup");
-        Roundup roundup = r.isObject() ? new Roundup(r.path("step").asInt(), r.path("fundCode").asString(), r.path("fundName").asString()) : null;
-        return new UserInfo(user.path("displayName").asString(null), accounts, roundup);
     }
 
     // «Округление на пользу»: шаг и фонд
@@ -88,42 +99,14 @@ public class AccountClient {
 
         public boolean isExternal(UUID accountId) {
             AccountInfo a = accounts.get(accountId);
-            return a != null && ("EXTERNAL_CARD".equals(a.type()) || "EXTERNAL_SBP".equals(a.type()));
+            return a != null && a.kind() != null && a.kind().isExternal();
         }
     }
 
-    public record AccountInfo(String title, String type) {
-    }
-
-    private Optional<Recipient> findRecipient(String param, String value) {
-        return Optional.ofNullable(rest.get()
-                // Значение — через переменную шаблона: так «+» в телефоне кодируется как %2B, а не теряется как пробел
-                .uri("/api/internal/recipients?" + param + "={value}", value)
-                .retrieve()
-                .onStatus(status -> status.value() == 404, (req, res) -> {
-                })
-                .body(Recipient.class));
+    public record AccountInfo(String title, AccountKind kind) {
     }
 
     // walletAccountId — «Мой кошелёк» получателя (только при поиске по телефону)
     public record Recipient(UUID userId, String displayName, UUID accountId, String sbpBankId, UUID walletAccountId) {
-
-        public Recipient(UUID userId, String displayName, UUID accountId, String sbpBankId) {
-            this(userId, displayName, accountId, sbpBankId, null);
-        }
-    }
-
-    public void capture(UUID paymentId) {
-        rest.post().uri("/api/internal/reservations/{paymentId}/capture", paymentId)
-                .retrieve().toBodilessEntity();
-    }
-
-    // Резерва нет (резервирование так и не дошло до account) — снимать нечего, это тоже успех
-    public void release(UUID paymentId) {
-        rest.post().uri("/api/internal/reservations/{paymentId}/release", paymentId)
-                .retrieve()
-                .onStatus(status -> status.value() == 404, (req, res) -> {
-                })
-                .toBodilessEntity();
     }
 }

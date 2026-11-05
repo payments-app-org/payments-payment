@@ -3,8 +3,7 @@ package com.paymentsapp.payment.quote;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.paymentsapp.payment.web.PaymentException;
-import com.paymentsapp.payment.web.PaymentException.Code;
+import com.paymentsapp.platform.error.DomainException;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
@@ -38,13 +37,14 @@ class QuoteVerifierTest {
                 .encodeToString(mac.doFinal(body.getBytes(StandardCharsets.US_ASCII)));
     }
 
-    private Code codeOf(Runnable r) {
+    // Код ошибки, который увидит клиент (поле code)
+    private String codeOf(Runnable r) {
         try {
             r.run();
-        } catch (PaymentException e) {
-            return e.getCode();
+        } catch (DomainException e) {
+            return e.getCode().code();
         }
-        throw new AssertionError("ожидали PaymentException");
+        throw new AssertionError("ожидали DomainException");
     }
 
     @Test
@@ -59,7 +59,7 @@ class QuoteVerifierTest {
         String token = sign(quote, "other-secret");
 
         assertThat(codeOf(() -> verifier.verify(token, userId, accountId, "SBP_PHONE", new BigDecimal("100"), null)))
-                .isEqualTo(Code.INVALID_QUOTE);
+                .isEqualTo("INVALID_QUOTE");
     }
 
     @Test
@@ -69,7 +69,7 @@ class QuoteVerifierTest {
         String token = sign(expired, SECRET);
 
         assertThat(codeOf(() -> verifier.verify(token, userId, accountId, "SBP_PHONE", new BigDecimal("100"), null)))
-                .isEqualTo(Code.QUOTE_EXPIRED);
+                .isEqualTo("QUOTE_EXPIRED");
     }
 
     @Test
@@ -77,11 +77,11 @@ class QuoteVerifierTest {
         String token = sign(quote, SECRET);
 
         assertThat(codeOf(() -> verifier.verify(token, userId, accountId, "SBP_PHONE", new BigDecimal("1000"), null)))
-                .isEqualTo(Code.QUOTE_MISMATCH);
+                .isEqualTo("QUOTE_MISMATCH");
         assertThat(codeOf(() -> verifier.verify(token, userId, UUID.randomUUID(), "SBP_PHONE", new BigDecimal("100"), null)))
-                .isEqualTo(Code.QUOTE_MISMATCH);
+                .isEqualTo("QUOTE_MISMATCH");
         assertThat(codeOf(() -> verifier.verify(token, userId, accountId, "CARD2CARD", new BigDecimal("100"), null)))
-                .isEqualTo(Code.QUOTE_MISMATCH);
+                .isEqualTo("QUOTE_MISMATCH");
     }
 
     @Test
@@ -95,12 +95,12 @@ class QuoteVerifierTest {
         assertThat(verifier.verify(token, userId, accountId, "CARD2CARD", new BigDecimal("100"), "2200300456781002"))
                 .isNotNull();
         assertThat(codeOf(() -> verifier.verify(token, userId, accountId, "CARD2CARD", new BigDecimal("100"),
-                "4111111111111111"))).isEqualTo(Code.QUOTE_MISMATCH);
+                "4111111111111111"))).isEqualTo("QUOTE_MISMATCH");
     }
 
     @Test
     void rejectsGarbage() {
         assertThatThrownBy(() -> verifier.verify("not-a-token", userId, accountId, "SBP_PHONE", BigDecimal.TEN, null))
-                .isInstanceOf(PaymentException.class);
+                .isInstanceOf(DomainException.class);
     }
 }

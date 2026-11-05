@@ -1,5 +1,6 @@
 package com.paymentsapp.payment.payment;
 
+import jakarta.persistence.Embedded;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -9,6 +10,8 @@ import jakarta.persistence.Version;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.UUID;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "payments")
@@ -45,28 +48,20 @@ public class Payment {
     private UUID quoteId;
     private String message;
     private String processingId;
-    // За рубеж
-    private String country;
-    private String receiveCurrency;
-    private BigDecimal receiveAmount;
-    private BigDecimal fxRate;
-    private Integer transferMethodId;
-    private String transferMethodName;
+    @Embedded
+    private AbroadDetails abroad;
 
-    // Данные получателя по полям способа перевода; номера карт — маской
-    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
+    // Данные получателя: за рубеж — по полям способа перевода (номера карт маской), юрлицу и в бюджет — реквизиты
+    @JdbcTypeCode(SqlTypes.JSON)
     private String recipientDetails;
     private String purpose;
     private String billReference;
-    // Оплата поставщику (BILL): кто поставщик, его группа и что ввёл плательщик — [{key, label, value, display}]
-    private String providerCode;
-    private String providerGroup;
-    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
-    private String billFields;
-    // «Округление на пользу»: сколько добавили к покупке и в какой фонд это уйдёт
-    private BigDecimal roundUpAmount = BigDecimal.ZERO;
-    private String roundUpFundCode;
-    private String roundUpFundName;
+
+    @Embedded
+    private BillDetails bill;
+
+    @Embedded
+    private RoundUp roundUp = RoundUp.NONE;
 
     @Enumerated(EnumType.STRING)
     private FailureCode failureCode;
@@ -83,16 +78,9 @@ public class Payment {
     protected Payment() {
     }
 
-    public Payment(UUID userId, PaymentType type, UUID sourceAccountId, String recipientPhone, String recipientBankId,
-                   String recipientCardMask, BigDecimal amount, BigDecimal commissionAmount, int commissionTariffId,
-                   String currency, UUID quoteId) {
-        this(userId, type, sourceAccountId, Parties.external(null), recipientPhone, recipientBankId, recipientCardMask,
-                amount, commissionAmount, commissionTariffId, currency, quoteId, null);
-    }
-
     public Payment(UUID userId, PaymentType type, UUID sourceAccountId, Parties parties, String recipientPhone,
                    String recipientBankId, String recipientCardMask, BigDecimal amount, BigDecimal commissionAmount,
-                   int commissionTariffId, String currency, UUID quoteId, String message) {
+                   int commissionTariffId, String currency, UUID quoteId, String message, OffsetDateTime now) {
         this.id = UUID.randomUUID();
         this.userId = userId;
         this.type = type;
@@ -114,8 +102,8 @@ public class Payment {
         this.currency = currency;
         this.quoteId = quoteId;
         this.message = message;
-        this.createdAt = OffsetDateTime.now();
-        this.updatedAt = createdAt;
+        this.createdAt = now;
+        this.updatedAt = now;
     }
 
     // Кто платит и кому. Получатель-клиент нашего банка — есть userId и карта для зачисления.
@@ -141,27 +129,17 @@ public class Payment {
         }
     }
 
-    // Детали перевода за рубеж
-    public record Abroad(String country, String receiveCurrency, BigDecimal receiveAmount, BigDecimal fxRate,
-                         int transferMethodId, String transferMethodName, String recipientDetailsJson) {
+    public void setAbroad(AbroadDetails abroad, String recipientDetailsJson) {
+        this.abroad = abroad;
+        this.recipientDetails = recipientDetailsJson;
     }
 
-    public void setAbroad(Abroad a) {
-        this.country = a.country();
-        this.receiveCurrency = a.receiveCurrency();
-        this.receiveAmount = a.receiveAmount();
-        this.fxRate = a.fxRate();
-        this.transferMethodId = a.transferMethodId();
-        this.transferMethodName = a.transferMethodName();
-        this.recipientDetails = a.recipientDetailsJson();
-    }
-
-    void moveTo(PaymentStatus to) {
+    void moveTo(PaymentStatus to, OffsetDateTime now) {
         if (!status.next().contains(to)) {
             throw new IllegalStateException("Платёж " + id + ": переход " + status + " → " + to + " запрещён");
         }
         this.status = to;
-        this.updatedAt = OffsetDateTime.now();
+        this.updatedAt = now;
     }
 
     void fail(FailureCode code, String reason) {
@@ -210,39 +188,21 @@ public class Payment {
     public FailureCode getFailureCode() { return failureCode; }
     public String getFailureReason() { return failureReason; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
-    public String getCountry() { return country; }
-    public String getReceiveCurrency() { return receiveCurrency; }
-    public BigDecimal getReceiveAmount() { return receiveAmount; }
-    public BigDecimal getFxRate() { return fxRate; }
-    public Integer getTransferMethodId() { return transferMethodId; }
-    public String getTransferMethodName() { return transferMethodName; }
+    public AbroadDetails getAbroad() { return abroad; }
     public String getRecipientDetails() { return recipientDetails; }
     public String getPurpose() { return purpose; }
     public String getBillReference() { return billReference; }
-    public String getProviderCode() { return providerCode; }
-    public String getProviderGroup() { return providerGroup; }
-    public String getBillFields() { return billFields; }
-    public BigDecimal getRoundUpAmount() { return roundUpAmount; }
-    public String getRoundUpFundCode() { return roundUpFundCode; }
-    public String getRoundUpFundName() { return roundUpFundName; }
+    public BillDetails getBill() { return bill; }
+    public RoundUp getRoundUp() { return roundUp; }
 
     // Разницу округления добавляем к списанию
-    public void setRoundUp(BigDecimal amount, String fundCode, String fundName) {
-        this.roundUpAmount = amount;
-        this.roundUpFundCode = fundCode;
-        this.roundUpFundName = fundName;
-        this.total = this.amount.add(commissionAmount).add(amount);
+    public void setRoundUp(RoundUp roundUp) {
+        this.roundUp = roundUp;
+        this.total = amount.add(commissionAmount).add(roundUp.amount());
     }
 
-    // Пожертвование фонду: деньги остаются в банке до вечернего перевода фондам — без шлюза поставщика
-    public boolean isDonation() {
-        return type == PaymentType.BILL && "DONATIONS".equals(providerGroup);
-    }
-
-    public void setBill(String providerCode, String providerGroup, String billFieldsJson) {
-        this.providerCode = providerCode;
-        this.providerGroup = providerGroup;
-        this.billFields = billFieldsJson;
+    public void setBill(BillDetails bill) {
+        this.bill = bill;
     }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
 }
