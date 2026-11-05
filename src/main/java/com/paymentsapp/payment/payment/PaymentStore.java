@@ -19,6 +19,7 @@ public class PaymentStore {
 
     private static final TypeReference<Map<String, Object>> AS_MAP = new TypeReference<>() { };
     private static final String CREATED_NOTE = "Платёж создан";
+    private static final String INCOMING_NOTE = "Входящий перевод по СБП получен";
 
     private final PaymentRepository payments;
     private final StatusChangeRepository history;
@@ -51,6 +52,14 @@ public class PaymentStore {
         return payment;
     }
 
+    // Входящий перевод: ключа идемпотентности нет, повтор отсекает уникальный индекс по номеру операции СБП
+    @Transactional
+    public Payment createIncoming(Payment payment) {
+        payments.saveAndFlush(payment);
+        history.save(new StatusChange(payment.getId(), payment.getStatus(), INCOMING_NOTE, now()));
+        return payment;
+    }
+
     @Transactional(readOnly = true)
     public Payment get(UUID id) {
         return payments.findById(id).orElseThrow();
@@ -69,6 +78,14 @@ public class PaymentStore {
         p.moveTo(to, now());
         p.setProcessingId(processingId);
         return saved(p, note);
+    }
+
+    // Итог ещё неизвестен: статус тот же, но RecoveryJob спросит снова не раньше, чем через свой интервал
+    @Transactional
+    public Payment touch(UUID id) {
+        Payment p = get(id);
+        p.touch(now());
+        return payments.saveAndFlush(p);
     }
 
     @Transactional

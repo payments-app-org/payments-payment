@@ -23,7 +23,9 @@ interface ProcessingApi {
     SbpBanks sbpBanks(@RequestParam("phone") String phone);
 
     // Номер карты получателя передаём только здесь, в базе payment его нет. Поля за рубеж — только для ABROAD.
-    record TransferRequest(UUID paymentId, String type, BigDecimal amount, String recipientPhone, String recipientBankId,
+    // sourceBankId — банк, из которого забираем деньги по СБП (пополнение со своего счёта в другом банке).
+    record TransferRequest(UUID paymentId, String type, BigDecimal amount, String sourceBankId, String recipientPhone,
+                           String recipientBankId,
                            String recipientCardNumber, String country, String receiveCurrency, BigDecimal receiveAmount,
                            String transferMethod) {
     }

@@ -11,6 +11,7 @@ import com.paymentsapp.payment.payment.Payment;
 import com.paymentsapp.payment.payment.PaymentRepository;
 import com.paymentsapp.platform.error.DomainException;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.util.List;
 import java.util.UUID;
@@ -69,7 +70,7 @@ public class PaymentController {
 
     // Справочник СБП для формы: в каких банках у владельца телефона есть счёт (перевод возможен только туда)
     @GetMapping("/sbp/banks")
-    public SbpBanks sbpBanks(@RequestParam String phone) {
+    public SbpBanks sbpBanks(@RequestParam @Pattern(regexp = "\\+7\\d{10}", message = "телефон в формате +7XXXXXXXXXX") String phone) {
         try {
             return new SbpBanks(phone, processing.sbpBanks(phone));
         } catch (RestClientException e) {

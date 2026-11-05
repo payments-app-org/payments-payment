@@ -30,12 +30,17 @@ public record PaymentResponse(
     private static final String DONE = "Перевод выполнен";
     private static final String RETURNING = ". Возвращаем средства";
     private static final String IN_PROGRESS = "Перевод обрабатывается";
+    private static final String ACCEPTED = "Перевод принят в обработку. Деньги зарезервированы; когда он завершится, "
+            + "операция появится в истории";
+    private static final String BILL_ACCEPTED = "Платёж принят поставщиком. Деньги зарезервированы; когда поставщик "
+            + "его проведёт, операция появится в истории";
 
     static PaymentResponse of(Payment p) {
         String message = switch (p.getStatus()) {
             case SUCCESS -> DONE;
             case FAILED -> p.getFailureReason();
             case COMPENSATING -> p.getFailureReason() + RETURNING;
+            case ACCEPTED -> p.getType() == PaymentType.BILL ? BILL_ACCEPTED : ACCEPTED;
             default -> IN_PROGRESS;
         };
         AbroadDetails abroad = p.getAbroad();
@@ -45,7 +50,7 @@ public record PaymentResponse(
                 p.getRoundUp().fundName());
     }
 
-    // 200 — платёж завершён (успешно или нет), 202 — ещё в процессе
+    // 200 — платёж завершён (успешно или нет), 202 — ещё в процессе (в том числе принят и ждёт итога)
     HttpStatus httpStatus() {
         return status.isFinal() ? HttpStatus.OK : HttpStatus.ACCEPTED;
     }

@@ -39,6 +39,8 @@ public class Payment {
     private String recipientName;
     private String recipientPhone;
     private String recipientBankId;
+    // Банк, откуда пришли деньги: входящий СБП, пополнение со своего счёта в другом банке
+    private String sourceBankId;
     private String recipientCardMask;
     private BigDecimal amount;
     private BigDecimal commissionAmount;
@@ -106,6 +108,33 @@ public class Payment {
         this.updatedAt = now;
     }
 
+    // Входящий перевод по СБП: владелец операции — получатель, деньги уже пришли из банка отправителя.
+    // processingId — номер операции в СБП (повтор от СБП не зачислит дважды), комиссии и котировки нет.
+    public static Payment incoming(String operationId, UUID recipientUserId, UUID recipientAccountId, String recipientName,
+                                   String recipientPhone, String senderName, String senderBankId, BigDecimal amount,
+                                   String currency, String message, OffsetDateTime now) {
+        Payment p = new Payment();
+        p.id = UUID.randomUUID();
+        p.userId = recipientUserId;
+        p.type = PaymentType.INCOMING_SBP;
+        p.status = PaymentStatus.CREATED;
+        p.senderName = senderName;
+        p.sourceBankId = senderBankId;
+        p.recipientUserId = recipientUserId;
+        p.recipientAccountId = recipientAccountId;
+        p.recipientName = recipientName;
+        p.recipientPhone = recipientPhone;
+        p.amount = amount;
+        p.commissionAmount = BigDecimal.ZERO;
+        p.total = amount;
+        p.currency = currency;
+        p.message = message;
+        p.processingId = operationId;
+        p.createdAt = now;
+        p.updatedAt = now;
+        return p;
+    }
+
     // Кто платит и кому. Получатель-клиент нашего банка — есть userId и карта для зачисления.
     // sourceExternal / destinationExternal — списываем с / зачисляем на привязанную карту другого банка.
     public record Parties(String senderName, UUID recipientUserId, UUID recipientAccountId, String recipientName,
@@ -148,7 +177,18 @@ public class Payment {
     }
 
     void setProcessingId(String processingId) {
-        this.processingId = processingId;
+        if (processingId != null) {
+            this.processingId = processingId;
+        }
+    }
+
+    // Платёж проверили, но статус не изменился (итог ещё неизвестен): в очередь RecoveryJob — в конец
+    void touch(OffsetDateTime now) {
+        this.updatedAt = now;
+    }
+
+    public void setSourceBankId(String sourceBankId) {
+        this.sourceBankId = sourceBankId;
     }
 
     public UUID getId() { return id; }
@@ -177,6 +217,7 @@ public class Payment {
     public String getMessage() { return message; }
     public String getRecipientPhone() { return recipientPhone; }
     public String getRecipientBankId() { return recipientBankId; }
+    public String getSourceBankId() { return sourceBankId; }
     public String getRecipientCardMask() { return recipientCardMask; }
     public BigDecimal getAmount() { return amount; }
     public BigDecimal getCommissionAmount() { return commissionAmount; }

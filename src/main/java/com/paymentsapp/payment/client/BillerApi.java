@@ -30,17 +30,21 @@ interface BillerApi {
     record PayRequest(UUID paymentId, String providerCode, BigDecimal amount, Map<String, String> fields) {
     }
 
+    // PENDING — поставщик принял платёж, но проведёт позже (подписка через партнёра)
     enum GatewayStatus {
         ACCEPTED,
-        REJECTED
+        REJECTED,
+        PENDING
     }
 
     record GatewayResult(UUID paymentId, GatewayStatus status, String externalId, String voucherCode, String message) {
 
         ProcessingClient.TransferResult toTransferResult() {
-            boolean accepted = status == GatewayStatus.ACCEPTED;
-            return new ProcessingClient.TransferResult(accepted ? ProcessingClient.TransferStatus.COMPLETED
-                    : ProcessingClient.TransferStatus.DECLINED, externalId, accepted ? null : message);
+            return switch (status) {
+                case ACCEPTED -> new ProcessingClient.TransferResult(ProcessingClient.TransferStatus.COMPLETED, externalId, null);
+                case REJECTED -> new ProcessingClient.TransferResult(ProcessingClient.TransferStatus.DECLINED, externalId, message);
+                case PENDING -> new ProcessingClient.TransferResult(ProcessingClient.TransferStatus.IN_PROGRESS, externalId, null);
+            };
         }
     }
 }

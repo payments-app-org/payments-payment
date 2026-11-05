@@ -31,18 +31,38 @@ public class AccountClient {
     }
 
     public void reserve(Payment p) {
-        AccountApi.ReserveRequest request = new AccountApi.ReserveRequest(p.getId(), p.getUserId(), p.getSourceAccountId(),
+        AccountApi.ReserveRequest request = reserveRequest(p);
+        calls.run(Backends.ACCOUNT, () -> rejectionsAsException(() -> api.reserve(request)));
+    }
+
+    // Между своими счетами и в кошелёк другого клиента: проверки, списание и зачисление — одна транзакция в account
+    public void transfer(Payment p) {
+        AccountApi.ReserveRequest request = reserveRequest(p);
+        calls.run(Backends.ACCOUNT, () -> rejectionsAsException(() -> api.transfer(request)));
+    }
+
+    // Входящий перевод: зачисление на счёт получателя (проверки счёта и лимита остатка кошелька — в account)
+    public void credit(Payment p) {
+        AccountApi.CreditRequest request = new AccountApi.CreditRequest(p.getId(), p.getUserId(), p.getRecipientAccountId(),
+                p.getAmount(), p.getCurrency());
+        calls.run(Backends.ACCOUNT, () -> rejectionsAsException(() -> api.credit(request)));
+    }
+
+    private static AccountApi.ReserveRequest reserveRequest(Payment p) {
+        return new AccountApi.ReserveRequest(p.getId(), p.getUserId(), p.getSourceAccountId(),
                 p.getRecipientAccountId(), p.getType().name(), p.getAmount(),
                 p.getCommissionAmount().add(p.getRoundUp().amount()), p.getCurrency(),
                 p.getBill() == null ? null : p.getBill().providerGroup());
-        calls.run(Backends.ACCOUNT, () -> {
-            try {
-                api.reserve(request);
-            } catch (HttpClientErrorException e) {
-                RemoteProblem problem = RemoteProblem.of(e, json, DEFAULT_REJECTION);
-                throw new AccountRejectedException(problem.code(), problem.detail());
-            }
-        });
+    }
+
+    // Бизнес-отказ account (4xx) — с его кодом и текстом
+    private void rejectionsAsException(Runnable call) {
+        try {
+            call.run();
+        } catch (HttpClientErrorException e) {
+            RemoteProblem problem = RemoteProblem.of(e, json, DEFAULT_REJECTION);
+            throw new AccountRejectedException(problem.code(), problem.detail());
+        }
     }
 
     public void capture(UUID paymentId) {
@@ -73,7 +93,8 @@ public class AccountClient {
     public UserInfo user(UUID userId) {
         AccountApi.UserProfile profile = calls.call(Backends.ACCOUNT, () -> api.user(userId));
         Map<UUID, AccountInfo> accounts = profile.accounts().stream().collect(Collectors.toMap(AccountApi.AccountView::id,
-                a -> new AccountInfo(a.cardLast4() == null ? a.title() : a.title() + LAST4_SEPARATOR + a.cardLast4(), a.type())));
+                a -> new AccountInfo(a.cardLast4() == null ? a.title() : a.title() + LAST4_SEPARATOR + a.cardLast4(), a.type(),
+                        a.sbpBankId())));
         AccountApi.RoundupView r = profile.roundup();
         return new UserInfo(profile.displayName(), accounts, r == null ? null : new Roundup(r.step(), r.fundCode(), r.fundName()));
     }
@@ -101,9 +122,15 @@ public class AccountClient {
             AccountInfo a = accounts.get(accountId);
             return a != null && a.kind() != null && a.kind().isExternal();
         }
+
+        // Свой счёт в другом банке (EXTERNAL_SBP): из какого банка забирать деньги по СБП
+        public String sbpBankId(UUID accountId) {
+            AccountInfo a = accounts.get(accountId);
+            return a == null || a.kind() != AccountKind.EXTERNAL_SBP ? null : a.sbpBankId();
+        }
     }
 
-    public record AccountInfo(String title, AccountKind kind) {
+    public record AccountInfo(String title, AccountKind kind, String sbpBankId) {
     }
 
     // walletAccountId — «Мой кошелёк» получателя (только при поиске по телефону)

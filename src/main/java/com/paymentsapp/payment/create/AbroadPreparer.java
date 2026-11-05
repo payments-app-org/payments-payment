@@ -10,6 +10,7 @@ import com.paymentsapp.payment.payment.AbroadDetails;
 import com.paymentsapp.payment.payment.PaymentType;
 import com.paymentsapp.payment.quote.Quote;
 import com.paymentsapp.platform.error.DomainException;
+import com.paymentsapp.platform.text.Rubles;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
@@ -60,6 +61,10 @@ class AbroadPreparer implements PaymentPreparer {
             throw DomainException.withCause(METHODS_UNAVAILABLE, e);
         }
         require(details.method().countryCode().equalsIgnoreCase(req.country()), METHOD_COUNTRY);
+        BillerClient.Method method = details.method();
+        if (!method.allows(req.amount())) {
+            throw new DomainException(METHOD_AMOUNT_RANGE, Rubles.format(method.minAmount()), Rubles.format(method.maxAmount()));
+        }
         require(details.currencies().contains(req.receiveCurrency()), CURRENCY_NOT_ALLOWED, req.receiveCurrency());
         require(req.receiveCurrency().equals(quote.receiveCurrency()) && quote.receiveAmount() != null
                 && quote.receiveAmount().compareTo(req.receiveAmount()) == 0, FX_QUOTE_MISMATCH);

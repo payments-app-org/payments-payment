@@ -11,6 +11,8 @@ import java.util.UUID;
 public record PaymentEvent(
         UUID paymentId, UUID userId, PaymentType type, PaymentStatus status, UUID sourceAccountId, String senderName,
         UUID recipientUserId, UUID recipientAccountId, String recipientName, String recipientPhone, String recipientBankId,
+        // Банк, откуда пришли деньги (входящий СБП, пополнение со своего счёта в другом банке)
+        String sourceBankId,
         String recipientCardMask, String message, boolean sourceExternal, boolean destinationExternal, String purpose,
         String billReference,
         // Деньги фонду переведёт biller в конце дня (пожертвование), а не шлюз поставщика сразу
@@ -31,7 +33,7 @@ public record PaymentEvent(
         AbroadDetails a = p.getAbroad();
         return new PaymentEvent(p.getId(), p.getUserId(), p.getType(), p.getStatus(), p.getSourceAccountId(), p.getSenderName(),
                 p.getRecipientUserId(), p.getRecipientAccountId(), p.getRecipientName(), p.getRecipientPhone(),
-                p.getRecipientBankId(), p.getRecipientCardMask(), p.getMessage(), p.isSourceExternal(),
+                p.getRecipientBankId(), p.getSourceBankId(), p.getRecipientCardMask(), p.getMessage(), p.isSourceExternal(),
                 p.isDestinationExternal(), p.getPurpose(), p.getBillReference(),
                 deferredSettlement ? Boolean.TRUE : null,
                 r == null ? null : r.amount(), r == null ? null : r.fundCode(), r == null ? null : r.fundName(),

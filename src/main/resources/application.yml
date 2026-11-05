@@ -136,6 +136,12 @@ payment:
   roundup:
     types: [REQUISITES, REQUISITES_OUR]
     bill-groups: [MOBILE, GAMES, UTILITIES, GOV, INTERNET, EDUCATION, SHOPS, TRAVEL, INSURANCE, SECURITY]
+  # Ключи идемпотентности: сколько хранить (дольше, чем клиент может повторять запрос) и как часто чистить.
+  # Удаляем пачками, чтобы не держать долгую блокировку таблицы
+  idempotency:
+    retention: 24h
+    cleanup-interval: 1h
+    cleanup-batch: 1000
   # Пожертвования: biller переводит фондам сам в конце дня — без шлюза поставщика
   settlement:
     deferred-groups: [DONATIONS]
@@ -145,6 +151,9 @@ payment:
     confirm-after: 10s
     release-after: 10s
     processing-after: 30s
+    # Долгий перевод (ACCEPTED): итог процессинг пришлёт сам; спрашиваем не чаще раза в столько — на случай,
+    # если уведомление потерялось
+    accepted-check-after: 1m
     interrupted-after: 60s
     batch-size: 50
 

@@ -16,6 +16,12 @@ interface AccountApi {
     @PostExchange("/api/internal/reservations")
     void reserve(@RequestBody ReserveRequest request);
 
+    @PostExchange("/api/internal/transfers")
+    void transfer(@RequestBody ReserveRequest request);
+
+    @PostExchange("/api/internal/credits")
+    void credit(@RequestBody CreditRequest request);
+
     @PostExchange("/api/internal/reservations/{paymentId}/capture")
     void capture(@PathVariable UUID paymentId);
 
@@ -36,10 +42,13 @@ interface AccountApi {
                           BigDecimal amount, BigDecimal commission, String currency, String providerGroup) {
     }
 
+    record CreditRequest(UUID paymentId, UUID userId, UUID accountId, BigDecimal amount, String currency) {
+    }
+
     record UserProfile(String displayName, List<AccountView> accounts, RoundupView roundup) {
     }
 
-    record AccountView(UUID id, String title, AccountKind type, String cardLast4) {
+    record AccountView(UUID id, String title, AccountKind type, String cardLast4, String sbpBankId) {
     }
 
     record RoundupView(int step, String fundCode, String fundName) {

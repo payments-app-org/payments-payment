@@ -1,6 +1,7 @@
 package com.paymentsapp.payment.payment;
 
 import static com.paymentsapp.payment.payment.PaymentStatus.*;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -19,9 +20,9 @@ import com.paymentsapp.payment.client.FraudClient.Verdict;
 import com.paymentsapp.payment.client.ProcessingClient;
 import com.paymentsapp.payment.client.ProcessingClient.TransferResult;
 import com.paymentsapp.payment.client.ProcessingClient.TransferStatus;
+import com.paymentsapp.payment.client.ResultLookup;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
-import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -46,6 +47,7 @@ class PaymentSagaTest {
 
     @BeforeEach
     void storeReturnsPayment() {
+        when(store.touch(any())).thenReturn(payment);
         when(store.move(any(), any(), anyString())).thenReturn(payment);
         when(store.moveWithProcessingId(any(), any(), any(), anyString())).thenReturn(payment);
         when(store.fail(any(), any(), any(), any())).thenReturn(payment);
@@ -82,14 +84,28 @@ class PaymentSagaTest {
 
         saga.run(own, null);
 
-        var order = inOrder(account, store);
-        order.verify(account).reserve(own);
-        order.verify(store).move(eq(ownId), eq(RESERVED), anyString());
-        order.verify(store).move(eq(ownId), eq(CONFIRMING), anyString());
-        order.verify(account).capture(ownId);
-        order.verify(store).move(eq(ownId), eq(SUCCESS), anyString());
+        // Одна операция в account: без резерва, антифрода и процессинга
+        verify(account).transfer(own);
+        verify(store).move(eq(ownId), eq(SUCCESS), anyString());
+        verify(account, never()).reserve(any());
+        verify(account, never()).capture(any());
         verify(fraud, never()).check(any());
         verify(processing, never()).transfer(any(), any());
+    }
+
+    @Test
+    void ownTransferTimeoutLeavesPaymentCreatedForRetry() {
+        Payment own = new Payment(UUID.randomUUID(), PaymentType.OWN_TRANSFER, UUID.randomUUID(),
+                new Payment.Parties("Зарплатная ·· 3752", UUID.randomUUID(), UUID.randomUUID(), "Мой кошелёк"),
+                null, null, null, new BigDecimal("1000"), BigDecimal.ZERO, 1, "RUB", UUID.randomUUID(), null, NOW);
+        when(store.get(own.getId())).thenReturn(own);
+        org.mockito.Mockito.doThrow(new ResourceAccessException("timeout")).when(account).transfer(own);
+
+        Payment result = saga.run(own, null);
+
+        // Неизвестно, прошёл ли перевод: не отменяем (резерва нет, отменять нечего), RecoveryJob повторит перевод
+        assertThat(result.getStatus()).isEqualTo(CREATED);
+        verify(store, never()).fail(any(), any(), any(), any());
     }
 
     @Test
@@ -171,7 +187,7 @@ class PaymentSagaTest {
     void processingTimeoutAsksForStatusAndCapturesIfCompleted() {
         when(fraud.check(payment)).thenReturn(new FraudDecision(Verdict.APPROVED, null));
         when(processing.transfer(payment, null)).thenThrow(new ResourceAccessException("Read timed out"));
-        when(processing.findResult(id)).thenReturn(Optional.of(new TransferResult(TransferStatus.COMPLETED, "PRC-2", null)));
+        when(processing.findResult(id)).thenReturn(new ResultLookup.Found(new TransferResult(TransferStatus.COMPLETED, "PRC-2", null)));
 
         saga.run(payment, null);
 
@@ -183,7 +199,7 @@ class PaymentSagaTest {
     void processingTimeoutWithUnknownOutcomeLeavesPaymentForRecovery() {
         when(fraud.check(payment)).thenReturn(new FraudDecision(Verdict.APPROVED, null));
         when(processing.transfer(payment, null)).thenThrow(new ResourceAccessException("Read timed out"));
-        when(processing.findResult(id)).thenReturn(Optional.empty());
+        when(processing.findResult(id)).thenReturn(new ResultLookup.NotReceived());
 
         saga.run(payment, null);
 
@@ -202,5 +218,92 @@ class PaymentSagaTest {
 
         verify(store, never()).move(eq(id), eq(SUCCESS), anyString());
         verify(account, never()).release(any());
+    }
+
+    // Найденная ошибка: процессинг лежит дольше processing-after — раньше RecoveryJob возвращал деньги,
+    // хотя перевод мог пройти. «Не удалось узнать» ≠ «не получали».
+    @Test
+    void unknownOutcomeNeverReleasesReservation() {
+        Payment sent = sentToProcessing();
+
+        saga.afterLookup(sent, new ResultLookup.Unknown("Connection refused"));
+
+        verify(account, never()).release(any());
+        verify(account, never()).capture(any());
+        verify(store, never()).fail(any(), any(), any(), any());
+        verify(store).touch(sent.getId());
+    }
+
+    @Test
+    void notReceivedReleasesReservation() {
+        Payment sent = sentToProcessing();
+
+        saga.afterLookup(sent, new ResultLookup.NotReceived());
+
+        verify(store).fail(sent.getId(), COMPENSATING, FailureCode.PROCESSING_NOT_COMPLETED,
+                "Перевод не был проведён, средства возвращены");
+        verify(account).release(sent.getId());
+    }
+
+    // Процессинг уже принял перевод (ACCEPTED), а потом говорит «не знаю такой» — противоречие, деньги не трогаем
+    @Test
+    void notReceivedAfterAcceptedDoesNotReleaseReservation() {
+        Payment accepted = sentToProcessing();
+        accepted.moveTo(ACCEPTED, NOW);
+
+        saga.afterLookup(accepted, new ResultLookup.NotReceived());
+
+        verify(account, never()).release(any());
+        verify(store).touch(accepted.getId());
+    }
+
+    @Test
+    void inProgressMovesToAcceptedAndKeepsReservation() {
+        when(fraud.check(payment)).thenReturn(new FraudDecision(Verdict.APPROVED, null));
+        when(processing.transfer(payment, null)).thenReturn(new TransferResult(TransferStatus.IN_PROGRESS, null, null));
+
+        saga.run(payment, null);
+
+        verify(store).moveWithProcessingId(eq(id), eq(ACCEPTED), eq(null), anyString());
+        verify(account, never()).capture(any());
+        verify(account, never()).release(any());
+    }
+
+    @Test
+    void resultNotificationForAcceptedPaymentCaptures() {
+        Payment accepted = sentToProcessing();
+        accepted.moveTo(ACCEPTED, NOW);
+        when(store.get(accepted.getId())).thenReturn(accepted);
+        when(store.moveWithProcessingId(any(), any(), any(), anyString())).thenReturn(accepted);
+        when(store.move(eq(accepted.getId()), any(), anyString())).thenReturn(accepted);
+
+        saga.onProcessingResult(accepted.getId(), new TransferResult(TransferStatus.COMPLETED, "PRC-7", null));
+
+        verify(store).moveWithProcessingId(eq(accepted.getId()), eq(CONFIRMING), eq("PRC-7"), anyString());
+        verify(account).capture(accepted.getId());
+    }
+
+    // Повторное или опоздавшее уведомление (платёж уже завершён) — ничего не делаем
+    @Test
+    void lateNotificationIsIgnored() {
+        Payment done = sentToProcessing();
+        done.moveTo(CONFIRMING, NOW);
+        done.moveTo(SUCCESS, NOW);
+        when(store.get(done.getId())).thenReturn(done);
+
+        saga.onProcessingResult(done.getId(), new TransferResult(TransferStatus.DECLINED, null, "поздно"));
+
+        verify(account, never()).release(any());
+        verify(store, never()).fail(any(), any(), any(), any());
+    }
+
+    private static Payment sentToProcessing() {
+        Payment p = new Payment(UUID.randomUUID(), PaymentType.ABROAD, UUID.randomUUID(),
+                new Payment.Parties(null, null, null, "JOHN DOE"), null, null, null, new BigDecimal("5000"),
+                new BigDecimal("50"), 1, "RUB", UUID.randomUUID(), null, NOW);
+        p.moveTo(RESERVED, NOW);
+        p.moveTo(FRAUD_APPROVED, NOW);
+        p.moveTo(SENT_TO_PROCESSING, NOW);
+        return p;
     }
 }

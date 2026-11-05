@@ -42,16 +42,25 @@ public class RecoveryJob {
         each(EnumSet.of(CONFIRMING), properties.confirmAfter(), p -> saga.confirm(p.getId()));
         each(EnumSet.of(COMPENSATING), properties.releaseAfter(), p -> saga.release(p.getId()));
 
-        // Процессинг (или поставщик через biller) так и не ответил — спрашиваем статус. Не получал — отменяем.
-        each(EnumSet.of(SENT_TO_PROCESSING), properties.processingAfter(), p -> saga.findProcessingResult(p)
-                .ifPresentOrElse(
-                        result -> saga.afterProcessing(p, result),
-                        () -> saga.compensate(p.getId(), FailureCode.PROCESSING_NOT_COMPLETED,
-                                "Перевод не был проведён, средства возвращены")));
+        // Процессинг (или поставщик через biller) так и не ответил — спрашиваем статус. Возвращаем деньги, только
+        // если он точно не получал перевод; если узнать не удалось (сосед лежит) — ждём, деньги могли уйти.
+        each(EnumSet.of(SENT_TO_PROCESSING), properties.processingAfter(), p -> saga.afterLookup(p, saga.lookup(p)));
+        // Долгий перевод: итог процессинг пришлёт сам, а здесь — подстраховка, если уведомление потерялось
+        each(EnumSet.of(ACCEPTED), properties.acceptedCheckAfter(), p -> saga.afterLookup(p, saga.lookup(p)));
 
-        // Сервис упал посреди саги до процессинга — деньги никуда не ушли, безопасно отменить
-        each(EnumSet.of(CREATED, RESERVED, FRAUD_APPROVED), properties.interruptedAfter(), p -> saga.compensate(p.getId(),
-                FailureCode.INTERRUPTED, "Платёж прерван, средства возвращены"));
+        // Сервис упал посреди саги до процессинга — деньги никуда не ушли. Внутри банка и входящий СБП —
+        // повторяем идемпотентную операцию в account (повтор вернёт уже проведённую); остальное безопасно отменить.
+        each(EnumSet.of(CREATED, RESERVED, FRAUD_APPROVED), properties.interruptedAfter(), this::resume);
+    }
+
+    private void resume(Payment p) {
+        if (p.getStatus() == CREATED && p.staysInBank()) {
+            saga.transferInBank(p);
+        } else if (p.getStatus() == CREATED && p.getType() == PaymentType.INCOMING_SBP) {
+            saga.creditIncoming(p);
+        } else {
+            saga.compensate(p.getId(), FailureCode.INTERRUPTED, "Платёж прерван, средства возвращены");
+        }
     }
 
     private void each(Set<PaymentStatus> statuses, Duration olderThan, Consumer<Payment> action) {

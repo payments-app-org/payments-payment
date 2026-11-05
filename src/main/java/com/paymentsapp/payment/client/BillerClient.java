@@ -12,12 +12,15 @@ import java.util.Optional;
 import java.util.UUID;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestClientException;
 import tools.jackson.databind.json.JsonMapper;
 
 // biller: способы перевода за рубеж и платежи поставщикам (BILL) — проверка и оплата у поставщика.
 // Оплату повторяем только при ошибке соединения; biller сам идемпотентен по paymentId.
 @Component
 public class BillerClient {
+
+    private static final String EMPTY_ANSWER = "пустой ответ";
 
     private final BillerApi api;
     private final ResilientCalls calls;
@@ -58,15 +61,21 @@ public class BillerClient {
         return calls.call(Backends.BILLER, Backends.BILLER_CONNECT_ONLY, () -> api.pay(request)).toTransferResult();
     }
 
-    // Чем закончилась оплата у поставщика. Пусто — поставщик платёж не получал.
-    public Optional<ProcessingClient.TransferResult> findPayment(UUID paymentId) {
-        return calls.call(Backends.BILLER, () -> {
-            try {
-                return Optional.ofNullable(api.payment(paymentId)).map(BillerApi.GatewayResult::toTransferResult);
-            } catch (HttpClientErrorException.NotFound e) {
-                return Optional.empty();
-            }
-        });
+    // Чем закончилась оплата у поставщика: 404 — поставщик платёж не получал, сбой связи — узнать не удалось
+    public ResultLookup findPayment(UUID paymentId) {
+        try {
+            return calls.call(Backends.BILLER, () -> {
+                try {
+                    BillerApi.GatewayResult result = api.payment(paymentId);
+                    return result == null ? new ResultLookup.Unknown(EMPTY_ANSWER)
+                            : new ResultLookup.Found(result.toTransferResult());
+                } catch (HttpClientErrorException.NotFound e) {
+                    return new ResultLookup.NotReceived();
+                }
+            });
+        } catch (RestClientException e) {
+            return new ResultLookup.Unknown(e.getMessage());
+        }
     }
 
     // Код отказа biller → наш код с тем же значением поля code (BILL_NOT_PAYABLE, INVALID_AMOUNT, …)
@@ -86,7 +95,12 @@ public class BillerClient {
     public record MethodDetails(Method method, List<String> currencies, List<Field> fields) {
     }
 
-    public record Method(int id, String countryCode, String name, String kind) {
+    // minAmount / maxAmount — сколько ₽ можно отправить одним переводом этим способом
+    public record Method(int id, String countryCode, String name, String kind, BigDecimal minAmount, BigDecimal maxAmount) {
+
+        public boolean allows(BigDecimal amount) {
+            return amount.compareTo(minAmount) >= 0 && amount.compareTo(maxAmount) <= 0;
+        }
     }
 
     public record Field(String key, String label, FieldType type, String pattern) {

@@ -40,6 +40,7 @@ public enum PaymentError implements ErrorCode {
 
     METHOD_NOT_FOUND(HttpStatus.BAD_REQUEST, "Способ перевода не найден", Codes.INVALID_REQUISITES),
     METHOD_COUNTRY(HttpStatus.BAD_REQUEST, "Способ перевода недоступен для этой страны", Codes.INVALID_REQUISITES),
+    METHOD_AMOUNT_RANGE(HttpStatus.UNPROCESSABLE_CONTENT, "Этим способом можно отправить от %s до %s"),
     CURRENCY_NOT_ALLOWED(HttpStatus.BAD_REQUEST, "В эту страну нельзя перевести в валюте %s", Codes.INVALID_REQUISITES),
     FIELD_REQUIRED(HttpStatus.BAD_REQUEST, "Заполните поле «%s»", Codes.INVALID_REQUISITES),
     FIELD_INVALID(HttpStatus.BAD_REQUEST, "Проверьте поле «%s»", Codes.INVALID_REQUISITES),
@@ -61,7 +62,12 @@ public enum PaymentError implements ErrorCode {
 
     IDEMPOTENCY_KEY_REUSED(HttpStatus.UNPROCESSABLE_CONTENT, "Ключ идемпотентности уже использован для другого запроса"),
     PAYMENT_IN_PROGRESS(HttpStatus.CONFLICT, "Запрос с этим ключом ещё обрабатывается"),
-    PAYMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "Платёж не найден");
+    PAYMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "Платёж не найден"),
+
+    // Внутренний API для процессинга
+    INCOMING_RECIPIENT_NOT_FOUND(HttpStatus.NOT_FOUND, "Получатель с таким телефоном не найден", Codes.RECIPIENT_NOT_FOUND),
+    RESULT_RETRY_LATER(HttpStatus.SERVICE_UNAVAILABLE, "Платёж сейчас обрабатывается, повторите запрос позже",
+            Codes.SERVICE_UNAVAILABLE);
 
     private final HttpStatus status;
     private final String template;

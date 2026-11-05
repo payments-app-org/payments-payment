@@ -14,5 +14,7 @@ public enum PaymentType {
     REQUISITES_OUR,
     // Оплата поставщику через biller: связь, госуслуги, транспорт, игры и сервисы, зарубежные операторы.
     // Поставщик — providerCode, его группа — providerGroup, введённые данные — billFields.
-    BILL
+    BILL,
+    // Входящий перевод по СБП из другого банка нашему клиенту: зачисление одной операцией в account
+    INCOMING_SBP
 }

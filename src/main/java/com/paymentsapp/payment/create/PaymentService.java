@@ -113,6 +113,8 @@ public class PaymentService {
         if (prepared.bill() != null) {
             payment.setBill(prepared.bill());
         }
+        // Источник — свой счёт в другом банке: процессинг заберёт деньги оттуда по СБП
+        payment.setSourceBankId(user.sbpBankId(req.sourceAccountId()));
         payment.setRoundUp(roundUp.of(req.type(), prepared.bill() == null ? null : prepared.bill().providerGroup(),
                 req.amount(), user.roundup()));
         try {
