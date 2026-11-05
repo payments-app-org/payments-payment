@@ -4,6 +4,11 @@ server:
 spring:
   application:
     name: payment
+  # Тайм-ауты всех HTTP-клиентов по умолчанию: зависший сосед не держит поток бесконечно
+  http:
+    clients:
+      connect-timeout: ${HTTP_CONNECT_TIMEOUT:1s}
+      read-timeout: ${HTTP_READ_TIMEOUT:5s}
   # Сага ждёт ответы других сервисов — на виртуальных потоках это дёшево
   threads:
     virtual:
@@ -24,6 +29,14 @@ spring:
     bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:29092}
     producer:
       acks: all
+  # Redis: блокировки планировщиков (ShedLock), кэш
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      # Redis — только для кэша и блокировок, репозитории Spring Data на нём не нужны
+      repositories:
+        enabled: false
   jpa:
     open-in-view: false
     hibernate:
@@ -49,8 +62,20 @@ clients:
 quote:
   secret: ${QUOTE_SECRET:local-dev-quote-secret-change-me}
 
-outbox:
-  publish-interval: 1s
-
 recovery:
   interval: 10s
+
+# Общая библиотека libs/platform
+platform:
+  time:
+    zone: Europe/Moscow
+  outbox:
+    enabled: true
+    publish-interval: 1s
+    retention: 7d
+
+messaging:
+  payment-events:
+    topic: payment.events
+    partitions: 3
+    replicas: 1

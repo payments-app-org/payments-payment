@@ -9,6 +9,7 @@ import java.util.Set;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -27,7 +28,9 @@ public class RecoveryJob {
         this.saga = saga;
     }
 
+    // При нескольких подах проход делает один (ShedLock), иначе поды дожимали бы одни и те же платежи
     @Scheduled(fixedDelayString = "${recovery.interval}")
+    @SchedulerLock(name = "payment-recovery")
     public void recover() {
         // Повторяем идемпотентные шаги account
         each(EnumSet.of(CONFIRMING), Duration.ofSeconds(10), p -> saga.confirm(p.getId()));

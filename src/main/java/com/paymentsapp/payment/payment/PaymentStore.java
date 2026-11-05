@@ -1,10 +1,11 @@
 package com.paymentsapp.payment.payment;
 
 import com.paymentsapp.payment.idempotency.Idempotency;
-import com.paymentsapp.payment.outbox.Outbox;
+import com.paymentsapp.platform.outbox.Outbox;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -13,15 +14,15 @@ import org.springframework.transaction.annotation.Transactional;
 @Component
 public class PaymentStore {
 
-    public static final String TOPIC = "payment.events";
-
     private final PaymentRepository payments;
     private final StatusChangeRepository history;
     private final Outbox outbox;
     private final Idempotency idempotency;
+    private final String topic;
 
     public PaymentStore(PaymentRepository payments, StatusChangeRepository history, Outbox outbox,
-                        Idempotency idempotency) {
+                        Idempotency idempotency, @Value("${messaging.payment-events.topic}") String topic) {
+        this.topic = topic;
         this.payments = payments;
         this.history = history;
         this.outbox = outbox;
@@ -124,6 +125,6 @@ public class PaymentStore {
             data.put("failureReason", p.getFailureReason());
         }
         String eventType = p.getStatus() == PaymentStatus.SUCCESS ? "PaymentSucceeded" : "PaymentFailed";
-        outbox.add(TOPIC, p.getId().toString(), eventType, data);
+        outbox.add(topic, p.getId().toString(), eventType, data);
     }
 }
