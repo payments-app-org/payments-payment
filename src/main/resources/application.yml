@@ -60,7 +60,8 @@ clients:
 
 # Общий с pricing секрет для проверки котировок
 quote:
-  secret: ${QUOTE_SECRET:local-dev-quote-secret-change-me}
+  # Только из окружения: значения по умолчанию у секрета нет
+  secret: ${QUOTE_SECRET}
 
 recovery:
   interval: 10s
