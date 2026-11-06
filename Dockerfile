@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Сборка из корня репозитория. Общая библиотека payments-platform скачивается из GitHub Packages: токен передаётся
 # секретом сборки (github_token) — в слои образа он не попадает. Тесты здесь не запускаем: их уже прогнал CI.
-FROM maven:3.9-eclipse-temurin-21 AS build
+FROM maven:3.9-eclipse-temurin-26 AS build
 WORKDIR /src
 ENV GITHUB_ACTOR=payments-build
 COPY .mvn .mvn
