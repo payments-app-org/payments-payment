@@ -47,6 +47,9 @@ spring:
     bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:29092}
     producer:
       acks: all
+    # Трасса публикации события (outbox → Kafka); читатели продолжают её по заголовку traceparent
+    template:
+      observation-enabled: true
   # Redis: блокировки планировщиков (ShedLock), кэш
   data:
     redis:
@@ -183,7 +186,9 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        # prometheus — метрики для Prometheus (/actuator/prometheus); куда отправлять трассы и формат логов
+        # задаёт окружение (в Kubernetes — payments-deploy/envs/<окружение>/env.yaml)
+        include: health,info,prometheus
   endpoint:
     health:
       probes:
